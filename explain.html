@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PETSCIInator · how it works</title>
+<style>
+  :root{
+    --c64-border:#6c5eb5;
+    --bg:#352a78;          /* deeper C64 blue so text pops */
+    --panel:#2f2570;
+    --panel2:#3d3290;
+    --line:#7d6fc8;
+    --ink:#ffffff;         /* white body text — high contrast */
+    --dim:#c3baee;         /* light lavender for secondary text */
+    --amber:#ffe866;       /* bright yellow */
+    --cyan:#84e7d8;
+    --pink:#ff7ab0;        /* functional: disagreement (brighter) */
+    --green:#9be88c;       /* functional: metric pick (brighter) */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--c64-border);
+    color:var(--ink);
+    font-family:"Courier New",ui-monospace,monospace;
+    -webkit-font-smoothing:none;
+    line-height:1.5;
+    padding:0 0 60px;
+  }
+  .wrap{max-width:940px;margin:0 auto;padding:0}
+  /* whole page sits in a C64 "screen" */
+  .screen{background:var(--bg);box-shadow:0 0 0 14px var(--c64-border);
+    background-image:repeating-linear-gradient(180deg,#0000 0 2px,#00000012 2px 3px);
+    padding:0 28px 40px;margin:20px auto;max-width:980px}
+  header{padding:34px 20px 24px;text-align:center}
+  .kicker{color:var(--cyan);letter-spacing:.34em;font-size:11px;text-transform:uppercase}
+  #titlebanner2{image-rendering:pixelated;display:block;margin:6px auto 6px;max-width:100%;height:auto}
+  h1{display:none}
+  .lede{color:var(--dim);max-width:640px;margin:.4em auto 0;font-size:14px}
+  .backlink{display:inline-block;margin-top:18px;color:var(--cyan);text-decoration:none;border:2px solid var(--cyan);padding:7px 14px;font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+  .backlink:hover{border-color:var(--cyan)}
+
+  .loader{
+    background:var(--panel);border:1px solid var(--line);
+    padding:16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:center;
+    margin:10px 0 36px;
+  }
+  .filebtn{font-family:inherit;font-size:12px;letter-spacing:.1em;background:#0f0a20;color:var(--ink);
+    border:1px solid var(--line);padding:8px 14px;cursor:pointer}
+  .filebtn:hover{border-color:var(--amber);color:var(--amber)}
+  input[type=file]{display:none}
+  .loader .hint{color:var(--dim);font-size:12px}
+  select{font-family:inherit;font-size:12px;background:#0f0a20;color:var(--ink);border:1px solid var(--line);padding:7px 10px}
+
+  .step{margin:0 0 14px;border:1px solid var(--line);background:var(--panel);overflow:hidden}
+  .step-head{display:flex;gap:14px;align-items:baseline;padding:18px 20px;cursor:pointer;user-select:none}
+  .step-head:hover{background:var(--panel2)}
+  .num{
+    font-size:13px;color:var(--bg);background:var(--amber);
+    min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+    font-weight:700;flex:none;align-self:center;
+  }
+  .step.s2 .num{background:var(--cyan)} .step.s3 .num{background:var(--pink)}
+  .step.s4 .num{background:var(--green)} .step.s5 .num{background:#b58cff}
+  .step-title{font-size:17px;color:var(--ink);letter-spacing:.02em;flex:1}
+  .step-sub{font-size:12px;color:var(--dim);display:block;margin-top:3px;letter-spacing:.03em}
+  .chev{color:var(--dim);font-size:13px;align-self:center;transition:transform .2s}
+  .step.open .chev{transform:rotate(90deg)}
+  .step-body{display:none;padding:4px 20px 24px;border-top:1px solid var(--line)}
+  .step.open .step-body{display:block}
+  .step-body p{font-size:13.5px;color:var(--ink)}
+  .step-body .muted{color:var(--dim)}
+  canvas{image-rendering:pixelated;background:#000;border:1px solid var(--line);max-width:100%}
+  .canvrow{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin:8px 0 4px}
+  .canvcol{display:flex;flex-direction:column;gap:6px}
+  .caption{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+  .pal{display:flex;gap:0;margin-top:6px;border:1px solid var(--line);width:max-content}
+  .pal .sw{width:22px;height:22px;position:relative}
+  .pal .sw.bg::after{content:"BG";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000}
+  .needimg{color:var(--dim);font-style:italic;font-size:13px}
+
+  /* cell inspector */
+  .inspector{margin-top:10px;background:var(--panel2);border:1px solid var(--line);padding:18px}
+  .insp-grid{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .pixgrid{display:grid;grid-template-columns:repeat(8,26px);grid-template-rows:repeat(8,26px);gap:1px;background:var(--line);border:1px solid var(--line);width:max-content}
+  .pixgrid div{width:26px;height:26px}
+  .maskgrid div{display:flex;align-items:center;justify-content:center;font-size:11px;color:#0006}
+  .insp-label{font-size:11px;color:var(--cyan);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+  .hamming{font-size:13px;margin-top:10px;color:var(--ink)}
+  .hamming b{color:var(--amber)}
+  .pickrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 4px;font-size:12px;color:var(--dim)}
+  .pickrow button{font-family:inherit;font-size:12px;background:#0f0a20;color:var(--ink);border:1px solid var(--line);padding:6px 11px;cursor:pointer}
+  .pickrow button:hover{border-color:var(--amber);color:var(--amber)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:10px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border:1px solid #0006}
+  code.k{background:#0f0a20;border:1px solid var(--line);padding:1px 6px;color:var(--cyan);font-size:12px}
+  .compare-wrap{margin-top:22px;padding-top:18px;border-top:1px dashed var(--line)}
+  .compare-head{font-size:12px;color:var(--amber);letter-spacing:.06em;margin-bottom:14px;text-transform:uppercase}
+  .pixgrid .edge{box-shadow:inset 0 0 0 2px var(--cyan)}
+  .foot{text-align:center;color:var(--dim);font-size:12px;margin-top:34px}
+  .foot a{color:var(--cyan)}
+  @media(max-width:560px){.pixgrid{grid-template-columns:repeat(8,20px);grid-template-rows:repeat(8,20px)}.pixgrid div{width:20px;height:20px}}
+</style>
+</head>
+<body>
+<div class="screen">
+<header>
+  <div class="kicker">Commodore 64 · how PETSCIInator thinks</div>
+  <canvas id="titlebanner2" width="100" height="20"></canvas>
+  <h1>From photo to PETSCII</h1>
+  <p class="lede">A 40×25 grid, two colors per cell, and 256 fixed glyphs from the character ROM. Here's every step PETSCIInator takes — running live on your image.</p>
+  <a class="backlink" href="index.html">◄ back to the converter</a>
+</header>
+
+<div class="wrap">
+  <div class="loader">
+    <span class="filebtn" id="pick">LOAD AN IMAGE</span>
+    <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,.svg">
+    <span class="hint">or use the sample →</span>
+    <select id="sample">
+      <option value="ramp">Sample: color ramp</option>
+      <option value="face">Sample: gradient orb</option>
+      <option value="edge">Sample: hard edges</option>
+      <option value="lines">Sample: thin lines</option>
+    </select>
+    <span class="hint" style="margin-left:auto">2nd metric
+      <select id="matchmode">
+        <option value="auto" selected>auto (per-cell)</option>
+        <option value="edge">edge fidelity</option>
+        <option value="shape">shape (structural)</option>
+        <option value="orient">orientation</option>
+      </select>
+    </span>
+    <span class="hint">Favor characters
+      <select id="charbias"><option value="0">off</option><option value="10">low</option><option value="20">med</option><option value="30">high</option></select>
+    </span>
+    <span class="hint">Charset
+      <select id="charset"><option value="set1">upper/gfx</option><option value="set2">lower</option></select>
+    </span>
+  </div>
+
+  <!-- STEP 1 -->
+  <section class="step s1 open" data-step="1">
+    <div class="step-head"><span class="num">1</span>
+      <span class="step-title">Downscale to the cell grid<span class="step-sub">320×200 image → 40×25 cells, 8×8 pixels each</span></span>
+      <span class="chev">▶</span></div>
+    <div class="step-body">
+      <p>A C64 text screen is <b>40 columns × 25 rows</b>. Every cell is an 8×8 block of pixels. So the very first move is to squash the source image down to exactly <code class="k">40·8 × 25·8</code> = 320×200 pixels, letting the browser do smooth averaging. After this, each 8×8 cell holds the pixels the algorithm has to reproduce with a single character.</p>
+      <div class="canvrow">
+        <div class="canvcol"><span class="caption">your image</span><canvas id="c1src" width="320" height="200" style="width:320px"></canvas></div>
+        <div class="canvcol"><span class="caption">downscaled · grid overlaid</span><canvas id="c1grid" width="320" height="200" style="width:320px"></canvas></div>
+      </div>
+      <p class="muted">The grid lines mark cell boundaries. Everything from here on happens cell by cell.</p>
+    </div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="step s2" data-step="2">
+    <div class="step-head"><span class="num">2</span>
+      <span class="step-title">Choose one background for the whole screen<span class="step-sub">the C64 shares a single background color across all cells</span></span>
+      <span class="chev">▶</span></div>
+    <div class="step-body">
+      <p>Here's the constraint that shapes everything: in standard text mode a cell can only show <b>two</b> colors — its own foreground, plus a <b>background that's global</b> to the entire screen. So before touching individual cells, the converter picks that one shared background.</p>
+      <p>It quantizes every pixel to the 16-color VIC-II palette, finds each cell's most common color, then takes the color that "wins" the most cells. That's almost always the backdrop.</p>
+      <div class="canvrow">
+        <div class="canvcol"><span class="caption">quantized to 16 colors</span><canvas id="c2quant" width="320" height="200" style="width:320px"></canvas></div>
+        <div class="canvcol"><span class="caption">chosen background</span>
+          <div class="pal" id="c2pal"></div>
+          <p class="muted" id="c2text" style="max-width:230px"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="step s3" data-step="3">
+    <div class="step-head"><span class="num">3</span>
+      <span class="step-title">Per cell: pick the foreground color<span class="step-sub">the most common color that isn't the background</span></span>
+      <span class="chev">▶</span></div>
+    <div class="step-body">
+      <p>Now each cell gets exactly one foreground color. The converter histograms the cell's 16-color pixels and takes the most frequent one that <b>isn't</b> the background. Combined with the shared background, every cell is now reduced to just two colors.</p>
+      <div class="canvrow">
+        <div class="canvcol"><span class="caption">each cell's foreground color</span><canvas id="c3fg" width="320" height="200" style="width:320px"></canvas></div>
+      </div>
+      <p class="muted">This is the color stored in "color RAM" on the real machine — one value per cell, 0–15.</p>
+    </div>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="step s4" data-step="4">
+    <div class="step-head"><span class="num">4</span>
+      <span class="step-title">Binarize: where should foreground go?<span class="step-sub">each of the 64 pixels becomes a single on/off bit</span></span>
+      <span class="chev">▶</span></div>
+    <div class="step-body">
+      <p>With two colors locked, each pixel asks one question: am I closer to foreground or to background? That yields a 64-bit pattern — a tiny black-and-white stencil of where the ink belongs in this cell. The converter calls this the <code class="k">want</code> mask.</p>
+      <div class="canvrow">
+        <div class="canvcol"><span class="caption">want-mask for every cell (white = foreground)</span><canvas id="c4mask" width="320" height="200" style="width:320px"></canvas></div>
+      </div>
+      <p class="muted">Click any cell below in step 5 to see its want-mask up close.</p>
+    </div>
+  </section>
+
+  <!-- STEP 5 -->
+  <section class="step s5" data-step="5">
+    <div class="step-head"><span class="num">5</span>
+      <span class="step-title">Match the closest ROM glyph<span class="step-sub">find the character whose shape disagrees least — Hamming distance</span></span>
+      <span class="chev">▶</span></div>
+    <div class="step-body">
+      <p>Every character in the C64 ROM is also an 8×8 stencil. The converter compares the cell's <code class="k">want</code> mask against all 256 glyphs and counts how many of the 64 positions <b>disagree</b> — that count is the <b>Hamming distance</b>. The glyph with the fewest disagreements wins. Draw it in the foreground color over the background, and the cell is done.</p>
+      <p class="muted">But raw Hamming has a blind spot: it treats every pixel independently, so a thin line can match a hollow "O" (or even vanish to blank) if the counts happen to work out. Real converters add a second metric to protect structure. Use the <b>2nd metric</b> menu above to compare flat Hamming against <b>edge fidelity</b> (boundaries must line up), <b>shape</b> (ink must sit near ink, via a distance transform), <b>orientation</b> (a horizontal cell can't grab a vertical glyph), or <b>auto</b> — which classifies each cell (flat / line / region / texture) and applies whichever metric suits it. The panel below shows, per cell, where flat Hamming and the chosen approach disagree.</p>
+
+      <div class="canvrow">
+        <div class="canvcol"><span class="caption">final PETSCII · click a cell to inspect</span><canvas id="c5out" width="320" height="200" style="width:320px;cursor:crosshair"></canvas></div>
+      </div>
+
+      <div class="inspector" id="inspector">
+        <p class="needimg" id="insphint">Load an image, then click any cell above to open it up.</p>
+        <div id="inspbody" style="display:none">
+          <div class="insp-grid">
+            <div>
+              <div class="insp-label">cell pixels</div>
+              <div class="pixgrid" id="ipix"></div>
+            </div>
+            <div>
+              <div class="insp-label">want mask</div>
+              <div class="pixgrid maskgrid" id="iwant"></div>
+            </div>
+            <div>
+              <div class="insp-label">matched glyph <span id="iglyphcode" style="color:var(--dim)"></span></div>
+              <div class="pixgrid maskgrid" id="iglyph"></div>
+            </div>
+          </div>
+          <div class="hamming" id="iham"></div>
+          <div class="legend">
+            <span><span class="dot" id="legfg"></span> foreground</span>
+            <span><span class="dot" id="legbg"></span> background</span>
+            <span style="color:var(--pink)">■ disagreement (counted in Hamming)</span>
+          </div>
+          <div class="pickrow">
+            <span>compare against other glyphs:</span>
+            <button id="prevg">‹ prev</button>
+            <button id="nextg">next ›</button>
+            <button id="bestg">↺ best match</button>
+            <span id="rankinfo"></span>
+          </div>
+
+          <div class="compare-wrap" id="comparewrap">
+            <div class="compare-head" id="comparehead">Flat Hamming vs edge-weighted on this cell</div>
+            <div class="insp-grid">
+              <div>
+                <div class="insp-label">want · edges marked</div>
+                <div class="pixgrid maskgrid" id="cwant"></div>
+              </div>
+              <div>
+                <div class="insp-label" style="color:#ff8a5f">flat Hamming pick <span id="cflatcode" style="color:var(--dim)"></span></div>
+                <div class="pixgrid maskgrid" id="cflat"></div>
+              </div>
+              <div>
+                <div class="insp-label" id="cedgelabel" style="color:var(--green)">edge-weighted pick <span id="cedgecode" style="color:var(--dim)"></span></div>
+                <div class="pixgrid maskgrid" id="cedge"></div>
+              </div>
+            </div>
+            <div class="hamming" id="cexplain"></div>
+            <div class="legend">
+              <span style="color:var(--cyan)">▢ outlined = boundary pixel (edge)</span>
+              <span style="color:var(--pink)">■ disagreement</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">Same ROM and matching logic as the converter — nothing here is faked. <a href="index.html">Open the converter ►</a></p>
+</div>
+</div>
+
+<script>
+const UP_B64="PGZubmBiPAAYPGZ+ZmZmAHxmZnxmZnwAPGZgYGBmPAB4bGZmZmx4AH5gYHhgYH4AfmBgeGBgYAA8ZmBuZmY8AGZmZn5mZmYAPBgYGBgYPAAeDAwMDGw4AGZseHB4bGYAYGBgYGBgfgBjd39rY2NjAGZ2fn5uZmYAPGZmZmZmPAB8ZmZ8YGBgADxmZmZmPA4AfGZmfHhsZgA8ZmA8BmY8AH4YGBgYGBgAZmZmZmZmPABmZmZmZjwYAGNjY2t/d2MAZmY8GDxmZgBmZmY8GBgYAH4GDBgwYH4APDAwMDAwPAAMEjB8MGL8ADwMDAwMDDwAABg8fhgYGBgAEDB/fzAQAAAAAAAAAAAAGBgYGAAAGABmZmYAAAAAAGZm/2b/ZmYAGD5gPAZ8GABiZgwYMGZGADxmPDhnZj8ABgwYAAAAAAAMGDAwMBgMADAYDAwMGDAAAGY8/zxmAAAAGBh+GBgAAAAAAAAAGBgwAAAAfgAAAAAAAAAAABgYAAADBgwYMGAAPGZudmZmPAAYGDgYGBh+ADxmBgwwYH4APGYGHAZmPAAGDh5mfwYGAH5gfAYGZjwAPGZgfGZmPAB+ZgwYGBgYADxmZjxmZjwAPGZmPgZmPAAAABgAABgAAAAAGAAAGBgwDhgwYDAYDgAAAH4AfgAAAHAYDAYMGHAAPGYGDBgAGAAAAAD//wAAAAgcPn9/HD4AGBgYGBgYGBgAAAD//wAAAAAA//8AAAAAAP//AAAAAAAAAAAA//8AADAwMDAwMDAwDAwMDAwMDAwAAADg8DgYGBgYHA8HAAAAGBg48OAAAADAwMDAwMD//8DgcDgcDgcDAwcOHDhw4MD//8DAwMDAwP//AwMDAwMDADx+fn5+PAAAAAAAAP//ADZ/f38+HAgAYGBgYGBgYGAAAAAHDxwYGMPnfjw8fufDADx+ZmZ+PAAYGGZmGBg8AAYGBgYGBgYGCBw+fz4cCAAYGBj//xgYGMDAMDDAwDAwGBgYGBgYGBgAAAM+djY2AP9/Px8PBwMBAAAAAAAAAADw8PDw8PDw8AAAAAD//////wAAAAAAAAAAAAAAAAAA/8DAwMDAwMDAzMwzM8zMMzMDAwMDAwMDAwAAAADMzDMz//78+PDgwIADAwMDAwMDAxgYGB8fGBgYAAAAAA8PDw8YGBgfHwAAAAAAAPj4GBgYAAAAAAAA//8AAAAfHxgYGBgYGP//AAAAAAAA//8YGBgYGBj4+BgYGMDAwMDAwMDA4ODg4ODg4OAHBwcHBwcHB///AAAAAAAA////AAAAAAAAAAAAAP///wMDAwMDA///AAAAAPDw8PAPDw8PAAAAABgYGPj4AAAA8PDw8AAAAADw8PDwDw8PD8OZkZGfmcP/58OZgZmZmf+DmZmDmZmD/8OZn5+fmcP/h5OZmZmTh/+Bn5+Hn5+B/4Gfn4efn5//w5mfkZmZw/+ZmZmBmZmZ/8Pn5+fn58P/4fPz8/OTx/+Zk4ePh5OZ/5+fn5+fn4H/nIiAlJycnP+ZiYGBkZmZ/8OZmZmZmcP/g5mZg5+fn//DmZmZmcPx/4OZmYOHk5n/w5mfw/mZw/+B5+fn5+fn/5mZmZmZmcP/mZmZmZnD5/+cnJyUgIic/5mZw+fDmZn/mZmZw+fn5/+B+fPnz5+B/8PPz8/Pz8P/8+3Pg8+dA//D8/Pz8/PD///nw4Hn5+fn/+/PgIDP7////////////+fn5+f//+f/mZmZ//////+ZmQCZAJmZ/+fBn8P5g+f/nZnz58+Zuf/DmcPHmJnA//nz5///////8+fPz8/n8//P5/Pz8+fP//+ZwwDDmf///+fngefn/////////+fnz////4H////////////n5////Pnz58+f/8OZkYmZmcP/5+fH5+fngf/Dmfnzz5+B/8OZ+eP5mcP/+fHhmYD5+f+Bn4P5+ZnD/8OZn4OZmcP/gZnz5+fn5//DmZnDmZnD/8OZmcH5mcP////n///n/////+f//+fnz/Hnz5/P5/H///+B/4H///+P5/P58+eP/8OZ+fPn/+f/////AAD////348GAgOPB/+fn5+fn5+fn////AAD//////wAA//////8AAP///////////wAA///Pz8/Pz8/Pz/Pz8/Pz8/Pz////Hw/H5+fn5+Pw+P///+fnxw8f////Pz8/Pz8/AAA/H4/H4/H4/Pz48ePHjx8/AAA/Pz8/Pz8AAPz8/Pz8/P/DgYGBgcP///////8AAP/JgICAweP3/5+fn5+fn5+f////+PDj5+c8GIHDw4EYPP/DgZmZgcP/5+eZmefnw//5+fn5+fn5+ffjwYDB4/f/5+fnAADn5+c/P8/PPz/Pz+fn5+fn5+fn///8wYnJyf8AgMDg8Pj8/v//////////Dw8PDw8PDw//////AAAAAAD//////////////////wA/Pz8/Pz8/PzMzzMwzM8zM/Pz8/Pz8/Pz/////MzPMzAABAwcPHz9//Pz8/Pz8/Pzn5+fg4Ofn5//////w8PDw5+fn4OD///////8HB+fn5////////wAA////4ODn5+fn5+cAAP///////wAA5+fn5+fnBwfn5+c/Pz8/Pz8/Px8fHx8fHx8f+Pj4+Pj4+PgAAP///////wAAAP////////////8AAAD8/Pz8/PwAAP////8PDw8P8PDw8P/////n5+cHB////w8PDw//////Dw8PD/Dw8PA=";
+const LOW_B64="PGZubmBiPAAAADwGPmY+AABgYHxmZnwAAAA8YGBgPAAABgY+ZmY+AAAAPGZ+YDwAAA4YPhgYGAAAAD5mZj4GfABgYHxmZmYAABgAOBgYPAAABgAGBgYGPABgYGx4bGYAADgYGBgYPAAAAGZ/f2tjAAAAfGZmZmYAAAA8ZmZmPAAAAHxmZnxgYAAAPmZmPgYGAAB8ZmBgYAAAAD5gPAZ8AAAYfhgYGA4AAABmZmZmPgAAAGZmZjwYAAAAY2t/PjYAAABmPBg8ZgAAAGZmZj4MeAAAfgwYMH4APDAwMDAwPAAMEjB8MGL8ADwMDAwMDDwAABg8fhgYGBgAEDB/fzAQAAAAAAAAAAAAGBgYGAAAGABmZmYAAAAAAGZm/2b/ZmYAGD5gPAZ8GABiZgwYMGZGADxmPDhnZj8ABgwYAAAAAAAMGDAwMBgMADAYDAwMGDAAAGY8/zxmAAAAGBh+GBgAAAAAAAAAGBgwAAAAfgAAAAAAAAAAABgYAAADBgwYMGAAPGZudmZmPAAYGDgYGBh+ADxmBgwwYH4APGYGHAZmPAAGDh5mfwYGAH5gfAYGZjwAPGZgfGZmPAB+ZgwYGBgYADxmZjxmZjwAPGZmPgZmPAAAABgAABgAAAAAGAAAGBgwDhgwYDAYDgAAAH4AfgAAAHAYDAYMGHAAPGYGDBgAGAAAAAD//wAAABg8Zn5mZmYAfGZmfGZmfAA8ZmBgYGY8AHhsZmZmbHgAfmBgeGBgfgB+YGB4YGBgADxmYG5mZjwAZmZmfmZmZgA8GBgYGBg8AB4MDAwMbDgAZmx4cHhsZgBgYGBgYGB+AGN3f2tjY2MAZnZ+fm5mZgA8ZmZmZmY8AHxmZnxgYGAAPGZmZmY8DgB8ZmZ8eGxmADxmYDwGZjwAfhgYGBgYGABmZmZmZmY8AGZmZmZmPBgAY2Nja393YwBmZjwYPGZmAGZmZjwYGBgAfgYMGDBgfgAYGBj//xgYGMDAMDDAwDAwGBgYGBgYGBgzM8zMMzPMzDOZzGYzmcxmAAAAAAAAAADw8PDw8PDw8AAAAAD//////wAAAAAAAAAAAAAAAAAA/8DAwMDAwMDAzMwzM8zMMzMDAwMDAwMDAwAAAADMzDMzzJkzZsyZM2YDAwMDAwMDAxgYGB8fGBgYAAAAAA8PDw8YGBgfHwAAAAAAAPj4GBgYAAAAAAAA//8AAAAfHxgYGBgYGP//AAAAAAAA//8YGBgYGBj4+BgYGMDAwMDAwMDA4ODg4ODg4OAHBwcHBwcHB///AAAAAAAA////AAAAAAAAAAAAAP///wEDBmx4cGAAAAAAAPDw8PAPDw8PAAAAABgYGPj4AAAA8PDw8AAAAADw8PDwDw8PD8OZkZGfmcP////D+cGZwf//n5+DmZmD////w5+fn8P///n5wZmZwf///8OZgZ/D///x58Hn5+f////BmZnB+YP/n5+DmZmZ///n/8fn58P///n/+fn5+cP/n5+Th5OZ///H5+fn58P///+ZgICUnP///4OZmZmZ////w5mZmcP///+DmZmDn5///8GZmcH5+f//g5mfn5/////Bn8P5g///54Hn5+fx////mZmZmcH///+ZmZnD5////5yUgMHJ////mcPnw5n///+ZmZnB84f//4Hz58+B/8PPz8/Pz8P/8+3Pg8+dA//D8/Pz8/PD///nw4Hn5+fn/+/PgIDP7////////////+fn5+f//+f/mZmZ//////+ZmQCZAJmZ/+fBn8P5g+f/nZnz58+Zuf/DmcPHmJnA//nz5///////8+fPz8/n8//P5/Pz8+fP//+ZwwDDmf///+fngefn/////////+fnz////4H////////////n5////Pnz58+f/8OZkYmZmcP/5+fH5+fngf/Dmfnzz5+B/8OZ+eP5mcP/+fHhmYD5+f+Bn4P5+ZnD/8OZn4OZmcP/gZnz5+fn5//DmZnDmZnD/8OZmcH5mcP////n///n/////+f//+fnz/Hnz5/P5/H///+B/4H///+P5/P58+eP/8OZ+fPn/+f/////AAD////nw5mBmZmZ/4OZmYOZmYP/w5mfn5+Zw/+Hk5mZmZOH/4Gfn4efn4H/gZ+fh5+fn//DmZ+RmZnD/5mZmYGZmZn/w+fn5+fnw//h8/Pz85PH/5mTh4+Hk5n/n5+fn5+fgf+ciICUnJyc/5mJgYGRmZn/w5mZmZmZw/+DmZmDn5+f/8OZmZmZw/H/g5mZg4eTmf/DmZ/D+ZnD/4Hn5+fn5+f/mZmZmZmZw/+ZmZmZmcPn/5ycnJSAiJz/mZnD58OZmf+ZmZnD5+fn/4H58+fPn4H/5+fnAADn5+c/P8/PPz/Pz+fn5+fn5+fnzMwzM8zMMzPMZjOZzGYzmf//////////Dw8PDw8PDw//////AAAAAAD//////////////////wA/Pz8/Pz8/PzMzzMwzM8zM/Pz8/Pz8/Pz/////MzPMzDNmzJkzZsyZ/Pz8/Pz8/Pzn5+fg4Ofn5//////w8PDw5+fn4OD///////8HB+fn5////////wAA////4ODn5+fn5+cAAP///////wAA5+fn5+fnBwfn5+c/Pz8/Pz8/Px8fHx8fHx8f+Pj4+Pj4+PgAAP///////wAAAP////////////8AAAD+/PmTh4+f//////8PDw8P8PDw8P/////n5+cHB////w8PDw//////Dw8PD/Dw8PA=";
+
+/* ---- palette (Pepto) ---- */
+const PAL=[[0,0,0],[255,255,255],[104,55,43],[112,164,178],[111,61,134],[88,141,67],
+[53,40,121],[184,199,111],[111,79,37],[67,57,0],[154,103,89],[68,68,68],
+[108,108,108],[154,210,132],[108,94,181],[149,149,149]];
+const rgb=c=>`rgb(${c[0]},${c[1]},${c[2]})`;
+function nearest(r,g,b){let bi=0,bd=1e9;for(let i=0;i<16;i++){const p=PAL[i];const d=(p[0]-r)**2+(p[1]-g)**2+(p[2]-b)**2;if(d<bd){bd=d;bi=i;}}return bi;}
+
+/* ---- decode ROM ---- */
+function decodeCharset(b64){const raw=atob(b64);const bank=[];for(let c=0;c<256;c++){const m=new Uint8Array(64);for(let r=0;r<8;r++){const byte=raw.charCodeAt(c*8+r);for(let x=0;x<8;x++)m[r*8+x]=(byte>>(7-x))&1;}bank.push(m);}return bank;}
+function withReverse(b){const f=b.slice(0,128);for(let c=0;c<128;c++){const inv=new Uint8Array(64);for(let p=0;p<64;p++)inv[p]=b[c][p]?0:1;f.push(inv);}return f;}
+function edgemap(bits){const e=new Uint8Array(64);for(let y=0;y<8;y++)for(let x=0;x<8;x++){const v=bits[y*8+x];if((x<7&&bits[y*8+x+1]!==v)||(x>0&&bits[y*8+x-1]!==v)||(y<7&&bits[(y+1)*8+x]!==v)||(y>0&&bits[(y-1)*8+x]!==v))e[y*8+x]=1;}return e;}
+function distTransform(bits){const INF=99,d=new Float32Array(64).fill(INF);for(let p=0;p<64;p++)if(bits[p])d[p]=0;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){const p=y*8+x;if(x>0)d[p]=Math.min(d[p],d[p-1]+1);if(y>0)d[p]=Math.min(d[p],d[p-8]+1);if(x>0&&y>0)d[p]=Math.min(d[p],d[p-9]+1.4);if(x<7&&y>0)d[p]=Math.min(d[p],d[p-7]+1.4);}
+  for(let y=7;y>=0;y--)for(let x=7;x>=0;x--){const p=y*8+x;if(x<7)d[p]=Math.min(d[p],d[p+1]+1);if(y<7)d[p]=Math.min(d[p],d[p+8]+1);if(x<7&&y<7)d[p]=Math.min(d[p],d[p+9]+1.4);if(x>0&&y<7)d[p]=Math.min(d[p],d[p+7]+1.4);}return d;}
+function orientHist(bits){const hg=[0,0,0,0];for(let y=0;y<8;y++)for(let x=0;x<8;x++){const g=(xx,yy)=>(xx<0||yy<0||xx>7||yy>7)?0:bits[yy*8+xx];const gx=(g(x+1,y-1)+2*g(x+1,y)+g(x+1,y+1))-(g(x-1,y-1)+2*g(x-1,y)+g(x-1,y+1));const gy=(g(x-1,y+1)+2*g(x,y+1)+g(x+1,y+1))-(g(x-1,y-1)+2*g(x,y-1)+g(x+1,y-1));const mag=Math.abs(gx)+Math.abs(gy);if(mag<1)continue;let a=((Math.atan2(gy,gx)%Math.PI)+Math.PI)%Math.PI;const bin=a<Math.PI/8||a>=7*Math.PI/8?0:a<3*Math.PI/8?2:a<5*Math.PI/8?1:3;hg[bin]+=mag;}const s=hg[0]+hg[1]+hg[2]+hg[3]||1;return hg.map(v=>v/s);}
+function chamferDist(aB,aD,bB,bD){let s=0,n=0;for(let p=0;p<64;p++){if(aB[p]){s+=bD[p];n++;}if(bB[p]){s+=aD[p];n++;}}return n?s/n:0;}
+const AUTO_PROFILES={flat:[0,0,0], line:[1,5,30], region:[3,1,6], texture:[0,0,0]};
+function classifyCell(want,wedge){
+  let on=0;for(let p=0;p<64;p++)on+=want[p];const fill=on/64;
+  if(fill<0.06||fill>0.94)return'flat';
+  let edges=0;for(let p=0;p<64;p++)edges+=wedge[p];
+  let trans=0;for(let y=0;y<8;y++)for(let x=0;x<8;x++){const v=want[y*8+x];if(x<7&&want[y*8+x+1]!==v)trans++;if(y<7&&want[(y+1)*8+x]!==v)trans++;}
+  const transDen=trans/112, thin=edges/Math.max(1,on);
+  const o=orientHist(want),conc=Math.max(o[0],o[1],o[2],o[3]);
+  if(thin>1.4&&conc>0.45)return'line';
+  if(transDen>0.34)return'texture';
+  return'region';
+}
+const SETS={set1:withReverse(decodeCharset(UP_B64)),set2:withReverse(decodeCharset(LOW_B64))};
+// precompute per-set metric tables aligned by index
+const EMAPS={set1:SETS.set1.map(edgemap),set2:SETS.set2.map(edgemap)};
+const GDT={set1:SETS.set1.map(distTransform),set2:SETS.set2.map(distTransform)};
+const GOR={set1:SETS.set1.map(orientHist),set2:SETS.set2.map(orientHist)};
+let GEDGE=EMAPS.set1, GDTc=GDT.set1, GORc=GOR.set1;
+let GLYPHS=SETS.set1;
+let charBias=0;
+let EDGEW=2;          // edge-fidelity weight
+let matchMode='auto'; // which 2nd-metric the comparison panel demonstrates
+const BAYER4=[0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+
+const COLS=40,ROWS=25,CW=8,CH=8,SW=320,SH=200;
+
+/* ---- state computed from the current image ---- */
+let imgData=null;       // Uint8ClampedArray of the 320x200 downscaled image
+let bgIndex=6;
+let cells=[];           // per cell: {fg, want:Uint8(64), code, ham, ranked:[{gi,d}]}
+let srcImg=null;
+
+/* ---- pipeline ---- */
+function computeAll(){
+  const tmp=document.createElement('canvas');tmp.width=SW;tmp.height=SH;
+  const tc=tmp.getContext('2d');tc.imageSmoothingEnabled=true;
+  tc.drawImage(srcImg,0,0,SW,SH);
+  imgData=tc.getImageData(0,0,SW,SH).data;
+
+  // global bg
+  const bgHist=new Uint32Array(16);
+  for(let cy=0;cy<ROWS;cy++)for(let cx=0;cx<COLS;cx++){
+    const h=new Uint16Array(16);
+    for(let p=0;p<64;p++){const i=((cy*CH+(p>>3))*SW+(cx*CW+(p&7)))*4;h[nearest(imgData[i],imgData[i+1],imgData[i+2])]++;}
+    let top=0,tv=-1;for(let k=0;k<16;k++)if(h[k]>tv){tv=h[k];top=k;}
+    bgHist[top]++;
+  }
+  let bg=0,bv=-1;for(let k=0;k<16;k++)if(bgHist[k]>bv){bv=bgHist[k];bg=k;}
+  bgIndex=bg;
+
+  // per cell
+  cells=[];
+  for(let cy=0;cy<ROWS;cy++)for(let cx=0;cx<COLS;cx++){
+    const fhist=new Uint16Array(16);
+    for(let p=0;p<64;p++){const i=((cy*CH+(p>>3))*SW+(cx*CW+(p&7)))*4;fhist[nearest(imgData[i],imgData[i+1],imgData[i+2])]++;}
+    let fg=bg,fv=-1;for(let k=0;k<16;k++)if(k!==bg&&fhist[k]>fv){fv=fhist[k];fg=k;}
+    if(fv<=0)fg=bg;
+    const FG=PAL[fg],BG=PAL[bg];
+    const want=new Uint8Array(64);
+    const dq=charBias/30;
+    for(let p=0;p<64;p++){const i=((cy*CH+(p>>3))*SW+(cx*CW+(p&7)))*4;
+      const df=(imgData[i]-FG[0])**2+(imgData[i+1]-FG[1])**2+(imgData[i+2]-FG[2])**2;
+      const db=(imgData[i]-BG[0])**2+(imgData[i+1]-BG[1])**2+(imgData[i+2]-BG[2])**2;
+      if(dq<=0){want[p]=df<db?1:0;continue;}
+      const t=db/(df+db+1e-6);
+      const bx=(cx*CW+(p&7))&3,by=(cy*CH+(p>>3))&3;
+      const thr=(BAYER4[by*4+bx]+0.5)/16;
+      const useThr=0.5*(1-dq)+thr*dq;
+      want[p]=t>useThr?1:0;}
+    // want-mask metrics for the active 2nd-metric mode
+    const wedge=edgemap(want);
+    let modeForCell=matchMode, cellClass=null;
+    if(matchMode==='auto'){ cellClass=classifyCell(want,wedge); }
+    const profile = matchMode==='auto' ? AUTO_PROFILES[cellClass] : null;
+    const needShape = matchMode==='shape' || (profile&&profile[1]>0);
+    const needOrient= matchMode==='orient'|| (profile&&profile[2]>0);
+    const wDT=needShape?distTransform(want):null;
+    const wOR=needOrient?orientHist(want):null;
+    // rank flat Hamming, plus the chosen structural metric
+    const ranked=[];
+    let flatBest=0,flatBd=1e9, metBest=0,metBd=1e9;
+    for(let gi=0;gi<GLYPHS.length;gi++){
+      const M=GLYPHS[gi];
+      let d=0; for(let p=0;p<64;p++) if(M[p]!==want[p])d++;
+      ranked.push({gi,d});
+      if(d<flatBd){flatBd=d;flatBest=gi;}
+      let cost=d;
+      if(matchMode==='auto'){
+        const [ew,sw,ow]=profile;
+        if(ew>0){let ed=0;const E=GEDGE[gi];for(let p=0;p<64;p++)if(E[p]!==wedge[p])ed++;cost+=ew*ed;}
+        if(sw>0)cost+=sw*chamferDist(want,wDT,M,GDTc[gi]);
+        if(ow>0){const O=GORc[gi];cost+=ow*(Math.abs(wOR[0]-O[0])+Math.abs(wOR[1]-O[1])+Math.abs(wOR[2]-O[2])+Math.abs(wOR[3]-O[3]));}
+      }
+      else if(matchMode==='edge'){let ed=0;const E=GEDGE[gi];for(let p=0;p<64;p++)if(E[p]!==wedge[p])ed++;cost=d+EDGEW*ed;}
+      else if(matchMode==='shape'){cost=d+4*chamferDist(want,wDT,M,GDTc[gi]);}
+      else if(matchMode==='orient'){const O=GORc[gi];cost=d+30*(Math.abs(wOR[0]-O[0])+Math.abs(wOR[1]-O[1])+Math.abs(wOR[2]-O[2])+Math.abs(wOR[3]-O[3]));}
+      if(cost<metBd){metBd=cost;metBest=gi;}
+    }
+    ranked.sort((a,b)=>a.d-b.d);
+    cells.push({cx,cy,fg,want,wedge,code:metBest,ham:ranked.find(r=>r.gi===metBest).d,
+                flatCode:flatBest,flatHam:flatBd,ranked,rankPos:0,cellClass});
+  }
+  render();
+  if(typeof autoSelectCell==='function' && autoReselect) autoSelectCell();
+}
+let autoReselect=false;
+
+function render(){
+  renderStep1();renderStep2();renderStep3();renderStep4();renderStep5();
+}
+
+function px(ctx,x,y,c){ctx.fillStyle=rgb(c);ctx.fillRect(x,y,1,1);}
+
+function renderStep1(){
+  const s=document.getElementById('c1src').getContext('2d');
+  s.imageSmoothingEnabled=true;s.clearRect(0,0,SW,SH);s.drawImage(srcImg,0,0,SW,SH);
+  const g=document.getElementById('c1grid');const gc=g.getContext('2d');
+  const im=new ImageData(new Uint8ClampedArray(imgData),SW,SH);gc.putImageData(im,0,0);
+  gc.strokeStyle='rgba(255,211,77,.28)';gc.lineWidth=0.5;
+  for(let x=0;x<=COLS;x++){gc.beginPath();gc.moveTo(x*CW,0);gc.lineTo(x*CW,SH);gc.stroke();}
+  for(let y=0;y<=ROWS;y++){gc.beginPath();gc.moveTo(0,y*CH);gc.lineTo(SW,y*CH);gc.stroke();}
+}
+function renderStep2(){
+  const ctx=document.getElementById('c2quant').getContext('2d');
+  const out=ctx.createImageData(SW,SH);
+  for(let i=0;i<SW*SH;i++){const o=i*4;const c=PAL[nearest(imgData[o],imgData[o+1],imgData[o+2])];out.data[o]=c[0];out.data[o+1]=c[1];out.data[o+2]=c[2];out.data[o+3]=255;}
+  ctx.putImageData(out,0,0);
+  const pal=document.getElementById('c2pal');pal.innerHTML='';
+  PAL.forEach((c,i)=>{const d=document.createElement('div');d.className='sw'+(i===bgIndex?' bg':'');d.style.background=rgb(c);pal.appendChild(d);});
+  document.getElementById('c2text').textContent=`Color #${bgIndex} won the most cells, so it becomes the shared screen background.`;
+}
+function renderStep3(){
+  const ctx=document.getElementById('c3fg').getContext('2d');
+  ctx.clearRect(0,0,SW,SH);
+  for(const cell of cells){ctx.fillStyle=rgb(PAL[cell.fg]);ctx.fillRect(cell.cx*CW,cell.cy*CH,CW,CH);}
+}
+function renderStep4(){
+  const ctx=document.getElementById('c4mask').getContext('2d');
+  const out=ctx.createImageData(SW,SH);
+  for(const cell of cells){
+    for(let p=0;p<64;p++){const x=cell.cx*CW+(p&7),y=cell.cy*CH+(p>>3);const o=(y*SW+x)*4;const v=cell.want[p]?255:18;out.data[o]=v;out.data[o+1]=v;out.data[o+2]=v;out.data[o+3]=255;}
+  }
+  ctx.putImageData(out,0,0);
+}
+function renderStep5(){
+  const ctx=document.getElementById('c5out').getContext('2d');
+  ctx.fillStyle=rgb(PAL[bgIndex]);ctx.fillRect(0,0,SW,SH);
+  for(const cell of cells){
+    const G=GLYPHS[cell.code];ctx.fillStyle=rgb(PAL[cell.fg]);
+    for(let p=0;p<64;p++)if(G[p])ctx.fillRect(cell.cx*CW+(p&7),cell.cy*CH+(p>>3),1,1);
+  }
+  if(selCell) drawSelOverlay(ctx);
+}
+
+/* ---- inspector ---- */
+let selCell=null;
+function drawSelOverlay(ctx){
+  ctx.strokeStyle='#ff5fa2';ctx.lineWidth=1;
+  ctx.strokeRect(selCell.cx*CW+.5,selCell.cy*CH+.5,CW-1,CH-1);
+}
+function openCell(cell){
+  selCell=cell;cell.rankPos=cell.ranked.findIndex(r=>r.gi===cell.code);
+  document.getElementById('insphint').style.display='none';
+  document.getElementById('inspbody').style.display='block';
+  renderInspector();renderStep5();
+}
+function renderInspector(){
+  const cell=selCell;const FG=PAL[cell.fg],BG=PAL[bgIndex];
+  // pixel grid
+  const ipix=document.getElementById('ipix');ipix.innerHTML='';
+  for(let p=0;p<64;p++){const x=cell.cx*CW+(p&7),y=cell.cy*CH+(p>>3);const o=(y*SW+x)*4;
+    const d=document.createElement('div');d.style.background=`rgb(${imgData[o]},${imgData[o+1]},${imgData[o+2]})`;ipix.appendChild(d);}
+  // want
+  const iw=document.getElementById('iwant');iw.innerHTML='';
+  for(let p=0;p<64;p++){const d=document.createElement('div');d.style.background=cell.want[p]?rgb(FG):rgb(BG);iw.appendChild(d);}
+  // current candidate glyph (may be best or a browsed one)
+  const r=cell.ranked[cell.rankPos];const G=GLYPHS[r.gi];
+  const ig=document.getElementById('iglyph');ig.innerHTML='';
+  for(let p=0;p<64;p++){
+    const on=G[p];const disagree=(on!==cell.want[p]);
+    const d=document.createElement('div');
+    d.style.background = disagree ? '#ff5fa2' : (on?rgb(FG):rgb(BG));
+    ig.appendChild(d);
+  }
+  document.getElementById('iglyphcode').textContent=`· screen code ${r.gi} (0x${r.gi.toString(16).padStart(2,'0')})`;
+  const isBest=cell.rankPos===0;
+  document.getElementById('iham').innerHTML=
+    `Hamming distance: <b>${r.d}</b> of 64 pixels disagree. ` +
+    (isBest?`This is the <b>best match</b> — no other glyph disagrees less.`
+           :`The best match (code ${cell.ranked[0].gi}) disagrees on only <b>${cell.ranked[0].d}</b>.`);
+  document.getElementById('rankinfo').textContent=`rank ${cell.rankPos+1} of 256`;
+  document.getElementById('legfg').style.background=rgb(FG);
+  document.getElementById('legbg').style.background=rgb(BG);
+  renderCompare(cell,FG,BG);
+}
+
+/* flat-Hamming pick vs edge-weighted pick, side by side */
+function renderCompare(cell,FG,BG){
+  // want with edge pixels outlined
+  const cw=document.getElementById('cwant');cw.innerHTML='';
+  for(let p=0;p<64;p++){const d=document.createElement('div');
+    d.style.background=cell.want[p]?rgb(FG):rgb(BG);
+    if(cell.wedge[p])d.className='edge';cw.appendChild(d);}
+  // helper to render a glyph grid with disagreements + edge outline
+  const grid=(elId,gi)=>{
+    const el=document.getElementById(elId);el.innerHTML='';
+    const G=GLYPHS[gi],E=GEDGE[gi];
+    for(let p=0;p<64;p++){
+      const on=G[p],disagree=on!==cell.want[p];
+      const d=document.createElement('div');
+      d.style.background=disagree?'#ff5fa2':(on?rgb(FG):rgb(BG));
+      if(E[p]||cell.wedge[p])d.className='edge';
+      el.appendChild(d);
+    }
+  };
+  grid('cflat',cell.flatCode);
+  grid('cedge',cell.code);
+  document.getElementById('cflatcode').textContent=`· code ${cell.flatCode}`;
+  document.getElementById('cedgecode').textContent=`· code ${cell.code}`;
+  // update the panel's right-column label to the active metric
+  const labels={edge:'edge-weighted pick',shape:'shape-matched pick',orient:'orientation-matched pick',auto:'auto pick'};
+  const lab=document.getElementById('cedgelabel');
+  lab.childNodes[0].nodeValue=labels[matchMode]+' ';
+  const heads={edge:'Flat Hamming vs edge-weighted on this cell',
+               shape:'Flat Hamming vs shape (structural) matching on this cell',
+               orient:'Flat Hamming vs orientation matching on this cell',
+               auto:'Flat Hamming vs auto (per-cell) matching on this cell'};
+  document.getElementById('comparehead').textContent=heads[matchMode];
+  const same=cell.flatCode===cell.code;
+  // per-metric score for flat pick vs metric pick
+  const emis=gi=>{let e=0;const E=GEDGE[gi];for(let p=0;p<64;p++)if(E[p]!==cell.wedge[p])e++;return e;};
+  const chm=gi=>chamferDist(cell.want,distTransform(cell.want),GLYPHS[gi],GDTc[gi]);
+  const orm=gi=>{const wO=orientHist(cell.want),O=GORc[gi];return (Math.abs(wO[0]-O[0])+Math.abs(wO[1]-O[1])+Math.abs(wO[2]-O[2])+Math.abs(wO[3]-O[3]));};
+  let txt;
+  const CLSDESC={flat:'flat (near-uniform) — a block is the right answer, so no structural terms are applied',
+                 line:'line (thin + directional) — shape + orientation are weighted so it can\u2019t vanish or curl into an O',
+                 region:'region (filled area with a boundary) — edge fidelity is weighted for a clean boundary',
+                 texture:'texture (many transitions) — flat Hamming already matches texture glyphs, so no extra terms'};
+  if(matchMode==='auto'){
+    const cls=cell.cellClass;
+    if(same){
+      txt=`Auto classified this cell as <b>${cls}</b>: ${CLSDESC[cls]}. Here that lands on the same glyph as flat Hamming (code <b>${cell.code}</b>). Click a thin line cell to see auto rescue one flat Hamming would erase.`;
+    }else{
+      txt=`Auto classified this cell as <b>${cls}</b>: ${CLSDESC[cls]}. Flat Hamming picks code <b>${cell.flatCode}</b>, but the per-cell profile picks code <b>${cell.code}</b> — the treatment is chosen from the cell\u2019s own content rather than one global setting.`;
+    }
+  }
+  else if(same){
+    txt=`On this cell flat Hamming and the ${labels[matchMode]} agree on code <b>${cell.code}</b>. Try a cell on a thin line or curve — that's where they split.`;
+  }else if(matchMode==='edge'){
+    txt=`Flat Hamming picks code <b>${cell.flatCode}</b> (fewest raw disagreements: ${cell.flatHam}), but its boundary lines up poorly — <b>${emis(cell.flatCode)}</b> edge mismatches. Edge-weighting picks code <b>${cell.code}</b> with only <b>${emis(cell.code)}</b>, so the outline survives.`;
+  }else if(matchMode==='shape'){
+    txt=`Flat Hamming picks code <b>${cell.flatCode}</b> by raw count, but structurally its ink sits far from the target's ink (chamfer <b>${chm(cell.flatCode).toFixed(2)}</b>). Shape matching picks code <b>${cell.code}</b> with chamfer <b>${chm(cell.code).toFixed(2)}</b> — closer in shape, so a thin line stays a line instead of collapsing to blank.`;
+  }else{
+    txt=`Flat Hamming picks code <b>${cell.flatCode}</b>, but its edges run the wrong way (orientation distance <b>${orm(cell.flatCode).toFixed(2)}</b>). Orientation matching picks code <b>${cell.code}</b> at <b>${orm(cell.code).toFixed(2)}</b> — a horizontally-structured cell gets a horizontal glyph, not a vertical or round one.`;
+  }
+  document.getElementById('cexplain').innerHTML=txt;
+}
+
+/* ---- input ---- */
+const $=id=>document.getElementById(id);
+$('c5out').addEventListener('click',e=>{
+  if(!cells.length)return;
+  const rect=e.target.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width*SW, y=(e.clientY-rect.top)/rect.height*SH;
+  const cx=Math.min(COLS-1,Math.max(0,Math.floor(x/CW))), cy=Math.min(ROWS-1,Math.max(0,Math.floor(y/CH)));
+  openCell(cells[cy*COLS+cx]);
+});
+$('prevg').onclick=()=>{if(!selCell)return;selCell.rankPos=(selCell.rankPos+255)%256;renderInspector();};
+$('nextg').onclick=()=>{if(!selCell)return;selCell.rankPos=(selCell.rankPos+1)%256;renderInspector();};
+$('bestg').onclick=()=>{if(!selCell)return;selCell.rankPos=0;renderInspector();};
+
+/* accordion */
+document.querySelectorAll('.step-head').forEach(h=>{
+  h.onclick=()=>h.parentElement.classList.toggle('open');
+});
+
+/* charset switch */
+$('charset').onchange=e=>{const s=e.target.value;GLYPHS=SETS[s];GEDGE=EMAPS[s];GDTc=GDT[s];GORc=GOR[s];if(srcImg)computeAll();};
+$('charbias').onchange=e=>{charBias=+e.target.value;if(srcImg)computeAll();};
+$('matchmode').onchange=e=>{matchMode=e.target.value;if(srcImg)computeAll();};
+
+/* image loading */
+function readAsDataURL(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});}
+function loadImage(url){return new Promise((res,rej)=>{const img=new Image();img.onload=async()=>{try{if(img.decode)await img.decode();}catch(_){}res(img);};img.onerror=()=>rej();img.src=url;if(img.complete&&img.naturalWidth)img.onload();});}
+async function loadFile(f){
+  if(!f)return;
+  try{const url=await readAsDataURL(f);const img=await loadImage(url);
+    let w=img.naturalWidth,h=img.naturalHeight;
+    if(!w||!h){const r=document.createElement('canvas');r.width=1024;r.height=1024;r.getContext('2d').drawImage(img,0,0,1024,1024);srcImg=r;}
+    else srcImg=img;
+    selCell=null;computeAll();
+  }catch(_){}
+}
+$('pick').onclick=()=>{const fi=$('file');fi.value='';fi.click();};
+$('file').onchange=e=>{const f=e.target.files[0];if(f)loadFile(f);};
+
+/* ---- built-in samples (drawn on a canvas so no external assets) ---- */
+function makeSample(kind){
+  const c=document.createElement('canvas');c.width=SW;c.height=SH;const x=c.getContext('2d');
+  if(kind==='ramp'){
+    for(let i=0;i<16;i++){const g=x.createLinearGradient(0,i*SH/16,SW,i*SH/16);g.addColorStop(0,'#000');g.addColorStop(1,rgb(PAL[(i+1)%16]));x.fillStyle=g;x.fillRect(0,i*SH/16,SW,SH/16+1);}
+  }else if(kind==='face'){
+    x.fillStyle='#101030';x.fillRect(0,0,SW,SH);
+    const g=x.createRadialGradient(150,95,8,150,95,120);
+    g.addColorStop(0,'#fff7d0');g.addColorStop(.35,'#ffd34d');g.addColorStop(.7,'#b8602a');g.addColorStop(1,'#101030');
+    x.fillStyle=g;x.beginPath();x.arc(150,95,110,0,7);x.fill();
+  }else if(kind==='lines'){
+    x.fillStyle='#101028';x.fillRect(0,0,SW,SH);
+    x.strokeStyle='#7ee787';x.lineWidth=2;
+    // thin straight + diagonal + curved strokes — the cases edge-fidelity protects
+    x.beginPath();x.moveTo(10,40);x.lineTo(310,40);x.stroke();
+    x.beginPath();x.moveTo(10,70);x.lineTo(310,120);x.stroke();
+    x.strokeStyle='#ffd34d';
+    x.beginPath();x.arc(160,150,40,0,Math.PI,false);x.stroke();
+    x.beginPath();x.moveTo(40,10);x.lineTo(40,190);x.stroke();
+    x.strokeStyle='#5fe0d0';
+    x.beginPath();x.moveTo(260,20);x.lineTo(200,185);x.stroke();
+  }else{ // edge
+    x.fillStyle='#2a2980';x.fillRect(0,0,SW,SH);
+    x.fillStyle='#7ee787';x.fillRect(0,0,SW/2,SH);
+    x.fillStyle='#ff5fa2';x.fillRect(SW/2,SH/2,SW/2,SH/2);
+    x.fillStyle='#ffd34d';x.beginPath();x.moveTo(SW/2,0);x.lineTo(SW,SH/2);x.lineTo(SW/2,SH/2);x.fill();
+  }
+  return c;
+}
+$('sample').onchange=e=>{srcImg=makeSample(e.target.value);selCell=null;computeAll();};
+
+/* boot with a sample that has structure, and auto-open an instructive cell.
+   Prefer a cell where flat-Hamming and edge-weighted picks DISAGREE, so the
+   comparison panel opens on a real teaching case. */
+function autoSelectCell(){
+  let best=null,bestScore=-1;
+  for(const c of cells){
+    if(c.fg===bgIndex)continue;
+    const onCount=c.want.reduce((a,b)=>a+b,0);
+    if(onCount<6||onCount>58)continue;
+    const differ = c.flatCode!==c.code ? 100 : 0;     // strongly prefer divergent cells
+    const score = differ + Math.min(onCount,64-onCount) - c.ham*0.3;
+    if(score>bestScore){bestScore=score;best=c;}
+  }
+  if(best) openCell(best);
+  else { selCell=null; document.getElementById('inspbody').style.display='none'; document.getElementById('insphint').style.display='block'; }
+}
+srcImg=makeSample('lines');$('sample').value='lines';computeAll();
+document.querySelector('.step.s5').classList.add('open');
+autoSelectCell();
+autoReselect=true;   // recomputes (sample/charset switch) reselect a fresh cell
+
+/* PETSCIInator title banner from real ROM glyphs */
+(function drawTitle2(){
+  const text='PETSCIINATOR';
+  const up=SETS.set1;
+  const scrCode=ch=> (ch>='A'&&ch<='Z')?ch.charCodeAt(0)-64 : 32;
+  const SCALE=5, GAP=1, CW=8, CH=8;
+  const cvs=document.getElementById('titlebanner2');
+  const cols=text.length;
+  cvs.width=cols*(CW+GAP)*SCALE-GAP*SCALE; cvs.height=CH*SCALE;
+  const ctx=cvs.getContext('2d');ctx.imageSmoothingEnabled=false;
+  for(let n=0;n<cols;n++){const G=up[scrCode(text[n])];const ox=n*(CW+GAP)*SCALE;
+    for(let p=0;p<64;p++)if(G[p]){ctx.fillStyle='#2a1f6b';ctx.fillRect(ox+(p&7)*SCALE+2,(p>>3)*SCALE+2,SCALE,SCALE);}}
+  for(let n=0;n<cols;n++){const G=up[scrCode(text[n])];const ox=n*(CW+GAP)*SCALE;
+    for(let p=0;p<64;p++)if(G[p]){ctx.fillStyle='#8d80d8';ctx.fillRect(ox+(p&7)*SCALE,(p>>3)*SCALE,SCALE,SCALE);}}
+})();
+</script>
+</body>
+</html>

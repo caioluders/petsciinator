@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PETSCIInator</title>
+<style>
+  :root{
+    /* authentic C64 (Pepto) blues, but with white text for contrast */
+    --c64-border:#6c5eb5;   /* light blue border */
+    --c64-bg:#352a78;       /* slightly deeper blue so white text pops */
+    --c64-fg:#ffffff;       /* white text (C64 colour 1) — high contrast */
+    --c64-ltblue:#b0a4e8;
+    --c64-white:#ffffff;
+    --c64-cyan:#84e7d8;     /* brighter cyan accent */
+    --c64-yellow:#ffe866;   /* bright yellow accent */
+    --line:#7d6fc8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:var(--c64-border);
+    color:var(--c64-fg);
+    font-family:"Courier New",ui-monospace,monospace;
+    -webkit-font-smoothing:none;
+    text-rendering:geometricPrecision;
+    display:flex;flex-direction:column;align-items:center;
+    padding:20px 14px 60px;gap:0;
+  }
+  /* the whole app sits inside a "screen" with the border around it */
+  .screen{
+    width:min(1000px,100%);
+    background:var(--c64-bg);
+    color:var(--c64-fg);
+    border:0;
+    padding:22px 22px 26px;
+    box-shadow:0 0 0 14px var(--c64-border), 0 24px 60px #0007;
+    position:relative;
+    /* faint scanlines */
+    background-image:repeating-linear-gradient(180deg,#0000 0 2px,#00000014 2px 3px);
+  }
+  /* PETSCII title banner drawn from real ROM glyphs */
+  #titlebanner{image-rendering:pixelated;display:block;margin:0 auto 4px;max-width:100%;height:auto}
+  .sub{color:var(--c64-cyan);letter-spacing:.28em;font-size:12px;text-align:center;margin:2px 0 14px}
+  .blink{animation:blink 1.06s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .readyline{color:var(--c64-fg);font-size:13px;letter-spacing:.06em;text-align:center;margin-bottom:18px}
+
+  .bar{
+    display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;
+    border-top:2px solid var(--line);border-bottom:2px solid var(--line);
+    padding:14px 2px;margin-bottom:16px;
+  }
+  label{display:flex;flex-direction:column;gap:5px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#d8d0ff}
+  .srcfield{display:flex;flex-direction:column;gap:5px}
+  .srclabel{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#d8d0ff}
+  input[type=range]{width:130px;accent-color:var(--c64-yellow)}
+  input[type=checkbox]{accent-color:var(--c64-yellow)}
+  select,button,.filebtn{
+    font-family:inherit;font-size:12px;letter-spacing:.08em;
+    background:var(--c64-bg);color:var(--c64-fg);
+    border:2px solid var(--c64-fg);padding:6px 10px;border-radius:0;cursor:pointer;
+    text-transform:uppercase;
+  }
+  button:hover,.filebtn:hover,select:hover{background:var(--c64-fg);color:var(--c64-bg)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:disabled:hover{background:var(--c64-bg);color:var(--c64-fg)}
+  input[type=file]{display:none}
+  .val{color:var(--c64-yellow)}
+  .stage{display:grid;grid-template-columns:1fr;gap:14px;place-items:center}
+  .frame{background:transparent;border:0;padding:0}
+  canvas{
+    image-rendering:pixelated;max-width:100%;height:auto;
+    background:#000;border:2px solid var(--c64-fg);
+  }
+  .drop{
+    border:2px dashed var(--c64-fg);
+    width:100%;min-height:220px;display:flex;align-items:center;justify-content:center;
+    color:var(--c64-fg);text-align:center;font-size:13px;letter-spacing:.1em;padding:24px;text-transform:uppercase;
+  }
+  .drop.over{border-color:var(--c64-white);color:var(--c64-white);background:#ffffff10}
+  .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  .hint{font-size:11px;color:var(--c64-ltblue);letter-spacing:.06em;text-transform:uppercase}
+  .swatches{display:flex;gap:2px;margin-top:4px}
+  .sw{width:12px;height:12px;border:1px solid #0006}
+  a{color:var(--c64-cyan)}
+  #status{text-transform:uppercase}
+</style>
+</head>
+<body>
+  <div class="screen">
+  <canvas id="titlebanner" width="100" height="20"></canvas>
+  <div class="sub">IMAGE TO COMMODORE 64 PETSCII CONVERTER</div>
+  <div class="readyline">READY.<span class="blink">█</span></div>
+
+  <div class="frame">
+    <div class="bar">
+      <div class="srcfield">
+        <span class="srclabel">Source</span>
+        <span class="row">
+          <span class="filebtn" id="pick">LOAD FILE</span>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml,.svg">
+        </span>
+      </div>
+      <label>Columns <span class="val" id="colsv">40</span>
+        <input type="range" id="cols" min="16" max="80" value="40" step="1">
+      </label>
+      <label>Brightness <span class="val" id="brv">0</span>
+        <input type="range" id="bright" min="-80" max="80" value="0" step="1">
+      </label>
+      <label>Contrast <span class="val" id="conv">1.0</span>
+        <input type="range" id="contrast" min="50" max="200" value="100" step="1">
+      </label>
+      <label>Mode
+        <select id="mode">
+          <option value="petscii">PETSCII glyphs</option>
+          <option value="blocks">Block mosaic (2×2)</option>
+        </select>
+      </label>
+      <label>Charset
+        <select id="charset">
+          <option value="set1">Uppercase / graphics</option>
+          <option value="set2">Lowercase</option>
+        </select>
+      </label>
+      <label>Reverse chars
+        <input type="checkbox" id="useinv" checked style="width:auto;margin-top:6px">
+      </label>
+      <label>Palette
+        <select id="pal">
+          <option value="pepto">Pepto (classic)</option>
+          <option value="colodore">Colodore</option>
+          <option value="gray">Mono green</option>
+        </select>
+        <span class="swatches" id="swatches"></span>
+      </label>
+      <label>Dither
+        <select id="dither">
+          <option value="none">None</option>
+          <option value="fs">Floyd–Steinberg</option>
+        </select>
+      </label>
+      <label>Favor characters <span class="val" id="charbiasv">0</span>
+        <input type="range" id="charbias" min="0" max="30" value="0" step="1">
+      </label>
+      <label>Auto match
+        <input type="checkbox" id="automatch" checked style="width:auto;margin-top:6px">
+      </label>
+      <label>Edge fidelity <span class="val" id="edgew">0</span>
+        <input type="range" id="edgeweight" min="0" max="5" value="2" step="1">
+      </label>
+      <label>Shape match <span class="val" id="shapew">0</span>
+        <input type="range" id="shapeweight" min="0" max="8" value="0" step="1">
+      </label>
+      <label>Orientation <span class="val" id="orientw">0</span>
+        <input type="range" id="orientweight" min="0" max="40" value="0" step="2">
+      </label>
+    </div>
+
+    <div class="stage">
+      <div class="drop" id="drop">DROP AN IMAGE HERE OR LOAD FILE</div>
+      <canvas id="out" width="320" height="200" style="display:none"></canvas>
+      <div class="row">
+        <button id="save" disabled>SAVE PNG</button>
+        <button id="copytxt" disabled>COPY CODES</button>
+        <button id="scale" disabled>×2 / ×4</button>
+      </div>
+      <div class="row">
+        <button id="expprg" disabled>.PRG</button>
+        <button id="expc" disabled>.C</button>
+        <button id="expasm" disabled>.ASM</button>
+        <button id="exppetmate" disabled>.PETMATE</button>
+      </div>
+      <div class="hint" id="status">no image loaded</div>
+    </div>
+  </div>
+  <div style="text-align:center;margin-top:26px;padding-top:20px;border-top:2px solid var(--line)">
+    <a href="explain.html" style="color:var(--c64-cyan);text-decoration:none;font-size:11px;letter-spacing:.16em;border:2px solid var(--c64-cyan);padding:7px 14px;display:inline-block;text-transform:uppercase">► How it works — step by step</a>
+  </div>
+  </div>
+
+<script>
+const UP_B64="PGZubmBiPAAYPGZ+ZmZmAHxmZnxmZnwAPGZgYGBmPAB4bGZmZmx4AH5gYHhgYH4AfmBgeGBgYAA8ZmBuZmY8AGZmZn5mZmYAPBgYGBgYPAAeDAwMDGw4AGZseHB4bGYAYGBgYGBgfgBjd39rY2NjAGZ2fn5uZmYAPGZmZmZmPAB8ZmZ8YGBgADxmZmZmPA4AfGZmfHhsZgA8ZmA8BmY8AH4YGBgYGBgAZmZmZmZmPABmZmZmZjwYAGNjY2t/d2MAZmY8GDxmZgBmZmY8GBgYAH4GDBgwYH4APDAwMDAwPAAMEjB8MGL8ADwMDAwMDDwAABg8fhgYGBgAEDB/fzAQAAAAAAAAAAAAGBgYGAAAGABmZmYAAAAAAGZm/2b/ZmYAGD5gPAZ8GABiZgwYMGZGADxmPDhnZj8ABgwYAAAAAAAMGDAwMBgMADAYDAwMGDAAAGY8/zxmAAAAGBh+GBgAAAAAAAAAGBgwAAAAfgAAAAAAAAAAABgYAAADBgwYMGAAPGZudmZmPAAYGDgYGBh+ADxmBgwwYH4APGYGHAZmPAAGDh5mfwYGAH5gfAYGZjwAPGZgfGZmPAB+ZgwYGBgYADxmZjxmZjwAPGZmPgZmPAAAABgAABgAAAAAGAAAGBgwDhgwYDAYDgAAAH4AfgAAAHAYDAYMGHAAPGYGDBgAGAAAAAD//wAAAAgcPn9/HD4AGBgYGBgYGBgAAAD//wAAAAAA//8AAAAAAP//AAAAAAAAAAAA//8AADAwMDAwMDAwDAwMDAwMDAwAAADg8DgYGBgYHA8HAAAAGBg48OAAAADAwMDAwMD//8DgcDgcDgcDAwcOHDhw4MD//8DAwMDAwP//AwMDAwMDADx+fn5+PAAAAAAAAP//ADZ/f38+HAgAYGBgYGBgYGAAAAAHDxwYGMPnfjw8fufDADx+ZmZ+PAAYGGZmGBg8AAYGBgYGBgYGCBw+fz4cCAAYGBj//xgYGMDAMDDAwDAwGBgYGBgYGBgAAAM+djY2AP9/Px8PBwMBAAAAAAAAAADw8PDw8PDw8AAAAAD//////wAAAAAAAAAAAAAAAAAA/8DAwMDAwMDAzMwzM8zMMzMDAwMDAwMDAwAAAADMzDMz//78+PDgwIADAwMDAwMDAxgYGB8fGBgYAAAAAA8PDw8YGBgfHwAAAAAAAPj4GBgYAAAAAAAA//8AAAAfHxgYGBgYGP//AAAAAAAA//8YGBgYGBj4+BgYGMDAwMDAwMDA4ODg4ODg4OAHBwcHBwcHB///AAAAAAAA////AAAAAAAAAAAAAP///wMDAwMDA///AAAAAPDw8PAPDw8PAAAAABgYGPj4AAAA8PDw8AAAAADw8PDwDw8PD8OZkZGfmcP/58OZgZmZmf+DmZmDmZmD/8OZn5+fmcP/h5OZmZmTh/+Bn5+Hn5+B/4Gfn4efn5//w5mfkZmZw/+ZmZmBmZmZ/8Pn5+fn58P/4fPz8/OTx/+Zk4ePh5OZ/5+fn5+fn4H/nIiAlJycnP+ZiYGBkZmZ/8OZmZmZmcP/g5mZg5+fn//DmZmZmcPx/4OZmYOHk5n/w5mfw/mZw/+B5+fn5+fn/5mZmZmZmcP/mZmZmZnD5/+cnJyUgIic/5mZw+fDmZn/mZmZw+fn5/+B+fPnz5+B/8PPz8/Pz8P/8+3Pg8+dA//D8/Pz8/PD///nw4Hn5+fn/+/PgIDP7////////////+fn5+f//+f/mZmZ//////+ZmQCZAJmZ/+fBn8P5g+f/nZnz58+Zuf/DmcPHmJnA//nz5///////8+fPz8/n8//P5/Pz8+fP//+ZwwDDmf///+fngefn/////////+fnz////4H////////////n5////Pnz58+f/8OZkYmZmcP/5+fH5+fngf/Dmfnzz5+B/8OZ+eP5mcP/+fHhmYD5+f+Bn4P5+ZnD/8OZn4OZmcP/gZnz5+fn5//DmZnDmZnD/8OZmcH5mcP////n///n/////+f//+fnz/Hnz5/P5/H///+B/4H///+P5/P58+eP/8OZ+fPn/+f/////AAD////348GAgOPB/+fn5+fn5+fn////AAD//////wAA//////8AAP///////////wAA///Pz8/Pz8/Pz/Pz8/Pz8/Pz////Hw/H5+fn5+Pw+P///+fnxw8f////Pz8/Pz8/AAA/H4/H4/H4/Pz48ePHjx8/AAA/Pz8/Pz8AAPz8/Pz8/P/DgYGBgcP///////8AAP/JgICAweP3/5+fn5+fn5+f////+PDj5+c8GIHDw4EYPP/DgZmZgcP/5+eZmefnw//5+fn5+fn5+ffjwYDB4/f/5+fnAADn5+c/P8/PPz/Pz+fn5+fn5+fn///8wYnJyf8AgMDg8Pj8/v//////////Dw8PDw8PDw//////AAAAAAD//////////////////wA/Pz8/Pz8/PzMzzMwzM8zM/Pz8/Pz8/Pz/////MzPMzAABAwcPHz9//Pz8/Pz8/Pzn5+fg4Ofn5//////w8PDw5+fn4OD///////8HB+fn5////////wAA////4ODn5+fn5+cAAP///////wAA5+fn5+fnBwfn5+c/Pz8/Pz8/Px8fHx8fHx8f+Pj4+Pj4+PgAAP///////wAAAP////////////8AAAD8/Pz8/PwAAP////8PDw8P8PDw8P/////n5+cHB////w8PDw//////Dw8PD/Dw8PA=";
+const LOW_B64="PGZubmBiPAAAADwGPmY+AABgYHxmZnwAAAA8YGBgPAAABgY+ZmY+AAAAPGZ+YDwAAA4YPhgYGAAAAD5mZj4GfABgYHxmZmYAABgAOBgYPAAABgAGBgYGPABgYGx4bGYAADgYGBgYPAAAAGZ/f2tjAAAAfGZmZmYAAAA8ZmZmPAAAAHxmZnxgYAAAPmZmPgYGAAB8ZmBgYAAAAD5gPAZ8AAAYfhgYGA4AAABmZmZmPgAAAGZmZjwYAAAAY2t/PjYAAABmPBg8ZgAAAGZmZj4MeAAAfgwYMH4APDAwMDAwPAAMEjB8MGL8ADwMDAwMDDwAABg8fhgYGBgAEDB/fzAQAAAAAAAAAAAAGBgYGAAAGABmZmYAAAAAAGZm/2b/ZmYAGD5gPAZ8GABiZgwYMGZGADxmPDhnZj8ABgwYAAAAAAAMGDAwMBgMADAYDAwMGDAAAGY8/zxmAAAAGBh+GBgAAAAAAAAAGBgwAAAAfgAAAAAAAAAAABgYAAADBgwYMGAAPGZudmZmPAAYGDgYGBh+ADxmBgwwYH4APGYGHAZmPAAGDh5mfwYGAH5gfAYGZjwAPGZgfGZmPAB+ZgwYGBgYADxmZjxmZjwAPGZmPgZmPAAAABgAABgAAAAAGAAAGBgwDhgwYDAYDgAAAH4AfgAAAHAYDAYMGHAAPGYGDBgAGAAAAAD//wAAABg8Zn5mZmYAfGZmfGZmfAA8ZmBgYGY8AHhsZmZmbHgAfmBgeGBgfgB+YGB4YGBgADxmYG5mZjwAZmZmfmZmZgA8GBgYGBg8AB4MDAwMbDgAZmx4cHhsZgBgYGBgYGB+AGN3f2tjY2MAZnZ+fm5mZgA8ZmZmZmY8AHxmZnxgYGAAPGZmZmY8DgB8ZmZ8eGxmADxmYDwGZjwAfhgYGBgYGABmZmZmZmY8AGZmZmZmPBgAY2Nja393YwBmZjwYPGZmAGZmZjwYGBgAfgYMGDBgfgAYGBj//xgYGMDAMDDAwDAwGBgYGBgYGBgzM8zMMzPMzDOZzGYzmcxmAAAAAAAAAADw8PDw8PDw8AAAAAD//////wAAAAAAAAAAAAAAAAAA/8DAwMDAwMDAzMwzM8zMMzMDAwMDAwMDAwAAAADMzDMzzJkzZsyZM2YDAwMDAwMDAxgYGB8fGBgYAAAAAA8PDw8YGBgfHwAAAAAAAPj4GBgYAAAAAAAA//8AAAAfHxgYGBgYGP//AAAAAAAA//8YGBgYGBj4+BgYGMDAwMDAwMDA4ODg4ODg4OAHBwcHBwcHB///AAAAAAAA////AAAAAAAAAAAAAP///wEDBmx4cGAAAAAAAPDw8PAPDw8PAAAAABgYGPj4AAAA8PDw8AAAAADw8PDwDw8PD8OZkZGfmcP////D+cGZwf//n5+DmZmD////w5+fn8P///n5wZmZwf///8OZgZ/D///x58Hn5+f////BmZnB+YP/n5+DmZmZ///n/8fn58P///n/+fn5+cP/n5+Th5OZ///H5+fn58P///+ZgICUnP///4OZmZmZ////w5mZmcP///+DmZmDn5///8GZmcH5+f//g5mfn5/////Bn8P5g///54Hn5+fx////mZmZmcH///+ZmZnD5////5yUgMHJ////mcPnw5n///+ZmZnB84f//4Hz58+B/8PPz8/Pz8P/8+3Pg8+dA//D8/Pz8/PD///nw4Hn5+fn/+/PgIDP7////////////+fn5+f//+f/mZmZ//////+ZmQCZAJmZ/+fBn8P5g+f/nZnz58+Zuf/DmcPHmJnA//nz5///////8+fPz8/n8//P5/Pz8+fP//+ZwwDDmf///+fngefn/////////+fnz////4H////////////n5////Pnz58+f/8OZkYmZmcP/5+fH5+fngf/Dmfnzz5+B/8OZ+eP5mcP/+fHhmYD5+f+Bn4P5+ZnD/8OZn4OZmcP/gZnz5+fn5//DmZnDmZnD/8OZmcH5mcP////n///n/////+f//+fnz/Hnz5/P5/H///+B/4H///+P5/P58+eP/8OZ+fPn/+f/////AAD////nw5mBmZmZ/4OZmYOZmYP/w5mfn5+Zw/+Hk5mZmZOH/4Gfn4efn4H/gZ+fh5+fn//DmZ+RmZnD/5mZmYGZmZn/w+fn5+fnw//h8/Pz85PH/5mTh4+Hk5n/n5+fn5+fgf+ciICUnJyc/5mJgYGRmZn/w5mZmZmZw/+DmZmDn5+f/8OZmZmZw/H/g5mZg4eTmf/DmZ/D+ZnD/4Hn5+fn5+f/mZmZmZmZw/+ZmZmZmcPn/5ycnJSAiJz/mZnD58OZmf+ZmZnD5+fn/4H58+fPn4H/5+fnAADn5+c/P8/PPz/Pz+fn5+fn5+fnzMwzM8zMMzPMZjOZzGYzmf//////////Dw8PDw8PDw//////AAAAAAD//////////////////wA/Pz8/Pz8/PzMzzMwzM8zM/Pz8/Pz8/Pz/////MzPMzDNmzJkzZsyZ/Pz8/Pz8/Pzn5+fg4Ofn5//////w8PDw5+fn4OD///////8HB+fn5////////wAA////4ODn5+fn5+cAAP///////wAA5+fn5+fnBwfn5+c/Pz8/Pz8/Px8fHx8fHx8f+Pj4+Pj4+PgAAP///////wAAAP////////////8AAAD+/PmTh4+f//////8PDw8P8PDw8P/////n5+cHB////w8PDw//////Dw8PD/Dw8PA=";
+/* ---- C64 palettes (RGB) ---- */
+const PALETTES = {
+  pepto: [
+    [0,0,0],[255,255,255],[104,55,43],[112,164,178],[111,61,134],[88,141,67],
+    [53,40,121],[184,199,111],[111,79,37],[67,57,0],[154,103,89],[68,68,68],
+    [108,108,108],[154,210,132],[108,94,181],[149,149,149]
+  ],
+  colodore: [
+    [0,0,0],[255,255,255],[129,51,43],[112,190,200],[127,57,151],[86,168,67],
+    [42,41,148],[221,232,124],[133,76,17],[88,57,0],[178,98,89],[74,74,74],
+    [123,123,123],[154,226,123],[105,103,209],[173,173,173]
+  ],
+  gray: null // built below
+};
+PALETTES.gray = Array.from({length:16},(_,i)=>{const v=Math.round(i/15*255);return [Math.round(v*.25),v,Math.round(v*.35)];});
+
+const CW=8, CH=8;            // C64 char cell
+let srcImg=null, scaleStep=1;
+
+/* ---- Real C64 CHARGEN ROM (901225-01), both character sets ----
+   Decoded to glyph banks of 256 chars, each a Uint8Array(64) coverage mask.
+   Codes 0..127 are ROM glyphs; 128..255 are their reverse (inverse video),
+   exactly as the VIC-II/KERNAL treats them. */
+let GLYPHS={set1:null,set2:null};   // set1 = uppercase/graphics, set2 = lowercase
+let glyphMeta=[];                   // [{bits,fill,q,row[8] coverage}] for active bank
+
+function decodeCharset(b64){
+  const raw=atob(b64);                       // 2048 bytes = 256 chars * 8 rows
+  const bank=[];
+  for(let c=0;c<256;c++){
+    const m=new Uint8Array(64);
+    for(let r=0;r<8;r++){
+      const byte=raw.charCodeAt(c*8+r);
+      for(let x=0;x<8;x++) m[r*8+x]=(byte>>(7-x))&1;   // MSB = leftmost pixel
+    }
+    bank.push(m);
+  }
+  return bank;
+}
+// Build reversed (inverse) glyphs 128..255 from 0..127 and append.
+function withReverse(bank128){
+  const full=bank128.slice(0,128);
+  for(let c=0;c<128;c++){
+    const inv=new Uint8Array(64);
+    for(let p=0;p<64;p++) inv[p]=bank128[c][p]?0:1;
+    full.push(inv);
+  }
+  return full;
+}
+function meta(bank){
+  return bank.map(bits=>{
+    let f=0;const q=[0,0,0,0];
+    for(let p=0;p<64;p++){if(bits[p]){f++;const qi=((p>>3)<4?0:2)+((p&7)<4?0:1);q[qi]++;}}
+    let edges=0;
+    for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+      const v=bits[y*8+x];
+      if(x<7 && v!==bits[y*8+x+1]) edges++;
+      if(y<7 && v!==bits[(y+1)*8+x]) edges++;
+    }
+    const emap=new Uint8Array(64);
+    for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+      const v=bits[y*8+x];
+      if((x<7&&bits[y*8+x+1]!==v)||(x>0&&bits[y*8+x-1]!==v)||
+         (y<7&&bits[(y+1)*8+x]!==v)||(y>0&&bits[(y-1)*8+x]!==v)) emap[y*8+x]=1;
+    }
+    return {bits,emap,fill:f/64,q:q.map(v=>v/16),edges:edges/112,
+            dt:distTransform(bits), orient:orientHist(bits)};
+  });
+}
+
+/* Distance transform over the "on" pixels of an 8x8 binary (two-pass chamfer).
+   Used for structural (shape) matching: how far is ink from ink. */
+function distTransform(bits){
+  const INF=99, d=new Float32Array(64).fill(INF);
+  for(let p=0;p<64;p++) if(bits[p]) d[p]=0;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){const p=y*8+x;
+    if(x>0)d[p]=Math.min(d[p],d[p-1]+1);
+    if(y>0)d[p]=Math.min(d[p],d[p-8]+1);
+    if(x>0&&y>0)d[p]=Math.min(d[p],d[p-9]+1.4);
+    if(x<7&&y>0)d[p]=Math.min(d[p],d[p-7]+1.4);}
+  for(let y=7;y>=0;y--)for(let x=7;x>=0;x--){const p=y*8+x;
+    if(x<7)d[p]=Math.min(d[p],d[p+1]+1);
+    if(y<7)d[p]=Math.min(d[p],d[p+8]+1);
+    if(x<7&&y<7)d[p]=Math.min(d[p],d[p+9]+1.4);
+    if(x>0&&y<7)d[p]=Math.min(d[p],d[p+7]+1.4);}
+  return d;
+}
+/* 4-bin edge-orientation histogram (H, V, /, \) from a binary via Sobel.
+   Used for gradient-direction matching: a horizontal cell shouldn't grab a
+   vertical glyph. */
+function orientHist(bits){
+  const hg=[0,0,0,0];
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const g=(xx,yy)=>(xx<0||yy<0||xx>7||yy>7)?0:bits[yy*8+xx];
+    const gx=(g(x+1,y-1)+2*g(x+1,y)+g(x+1,y+1))-(g(x-1,y-1)+2*g(x-1,y)+g(x-1,y+1));
+    const gy=(g(x-1,y+1)+2*g(x,y+1)+g(x+1,y+1))-(g(x-1,y-1)+2*g(x,y-1)+g(x+1,y-1));
+    const mag=Math.abs(gx)+Math.abs(gy); if(mag<1) continue;
+    let a=((Math.atan2(gy,gx)%Math.PI)+Math.PI)%Math.PI;
+    const bin = a<Math.PI/8||a>=7*Math.PI/8?0 : a<3*Math.PI/8?2 : a<5*Math.PI/8?1 : 3;
+    hg[bin]+=mag;
+  }
+  const s=hg[0]+hg[1]+hg[2]+hg[3]||1; return hg.map(v=>v/s);
+}
+/* symmetric chamfer distance between target (bits+dt) and glyph (bits+dt) */
+function chamferDist(aB,aD,bB,bD){
+  let s=0,n=0;
+  for(let p=0;p<64;p++){if(aB[p]){s+=bD[p];n++;} if(bB[p]){s+=aD[p];n++;}}
+  return n?s/n:0;
+}
+
+/* Auto mode: classify a cell's want-mask into one of four content types, then
+   route to a metric-weight profile [edge, shape, orient] tuned for that type:
+   - flat:    near-empty/near-full -> a block is correct, no structural terms
+   - line:    thin + directional   -> shape+orientation so it can't vanish/curl
+   - region:  filled area w/ edge   -> edge fidelity for a clean boundary
+   - texture: many transitions      -> flat Hamming already matches texture glyphs */
+const AUTO_PROFILES={flat:[0,0,0], line:[1,5,30], region:[3,1,6], texture:[0,0,0]};
+function classifyCell(want, wedge){
+  let on=0; for(let p=0;p<64;p++) on+=want[p];
+  const fill=on/64;
+  if(fill<0.06||fill>0.94) return 'flat';
+  let edges=0; for(let p=0;p<64;p++) edges+=wedge[p];   // boundary pixel count
+  // transition density (4-neighbour) for texture detection
+  let trans=0;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){const v=want[y*8+x];
+    if(x<7&&want[y*8+x+1]!==v)trans++; if(y<7&&want[(y+1)*8+x]!==v)trans++;}
+  const transDen=trans/112;
+  const thin = edges/Math.max(1,on);
+  const o=orientHist(want); const conc=Math.max(o[0],o[1],o[2],o[3]);
+  if(thin>1.4 && conc>0.45) return 'line';
+  if(transDen>0.34) return 'texture';
+  return 'region';
+}
+
+/* Character bias via ordered dithering: 0 = clean blocks, higher = dither
+   mid-tones into texture so real characters match. Set by the UI. */
+let charBias=0;
+let edgeWeight=0;   // 0 = flat Hamming; higher protects line/shape boundaries
+let shapeWeight=0;  // structural (chamfer) distance weight
+let orientWeight=0; // gradient-orientation distance weight
+let autoMatch=true; // auto: classify each cell and route to a metric profile
+const BAYER4=[0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
+
+/* color helpers */
+const lum=(r,g,b)=>0.299*r+0.587*g+0.114*b;
+function nearest(pal,r,g,b){let bi=0,bd=1e9;for(let i=0;i<pal.length;i++){const[pr,pg,pb]=pal[i];const d=(pr-r)**2+(pg-g)**2+(pb-b)**2;if(d<bd){bd=d;bi=i;}}return bi;}
+
+function process(){
+  if(!srcImg) return;
+  const sW=srcImg.naturalWidth||srcImg.width, sH=srcImg.naturalHeight||srcImg.height;
+  if(!sW || !sH){ status_.textContent='image not ready — try reloading'; return; }
+  const cols=+cols_.value, rows=Math.max(1,Math.round(cols*9/16*(sH/sW)*16/9));
+  // sample image into cols*CW x rows*CH then per-cell analyse
+  const sw=cols*CW, sh=rows*CH;
+  const tmp=document.createElement('canvas');tmp.width=sw;tmp.height=sh;
+  const tc=tmp.getContext('2d');
+  tc.imageSmoothingEnabled=true;
+  tc.drawImage(srcImg,0,0,sw,sh);
+  let img=tc.getImageData(0,0,sw,sh), d=img.data;
+
+  // brightness/contrast
+  const br=+bright_.value, con=+contrast_.value/100;
+  for(let i=0;i<d.length;i+=4){
+    for(let k=0;k<3;k++){let v=d[i+k];v=(v-128)*con+128+br;d[i+k]=v<0?0:v>255?255:v;}
+  }
+
+  const pal=PALETTES[pal_.value];
+  // optional FS dither on color
+  if(dither_.value==='fs'){
+    for(let y=0;y<sh;y++)for(let x=0;x<sw;x++){
+      const i=(y*sw+x)*4;const oldc=[d[i],d[i+1],d[i+2]];
+      const ni=nearest(pal,...oldc);const nc=pal[ni];
+      for(let k=0;k<3;k++){const e=oldc[k]-nc[k];d[i+k]=nc[k];
+        const push=(xx,yy,f)=>{if(xx<0||yy<0||xx>=sw||yy>=sh)return;const j=(yy*sw+xx)*4+k;d[j]=Math.max(0,Math.min(255,d[j]+e*f));};
+        push(x+1,y,7/16);push(x-1,y+1,3/16);push(x,y+1,5/16);push(x+1,y+1,1/16);
+      }
+    }
+  }
+
+  const out=document.getElementById('out');
+  out.width=sw;out.height=sh;
+  const oc=out.getContext('2d');
+  const mode=mode_.value;
+  textGrid=[];screenCodes=[];colorRAM=[];
+  if(!glyphMeta.length){status_.textContent='ROM not loaded yet…';return;}
+
+  // ---- global background pre-pass (C64 standard text mode = one shared bg) ----
+  // Histogram the single most-common quantized color per cell; its mode = bg.
+  if(mode!=='blocks'){
+    const bgHist=new Uint32Array(16);
+    for(let cy=0;cy<rows;cy++)for(let cx=0;cx<cols;cx++){
+      const h=new Uint16Array(16);
+      for(let p=0;p<64;p++){
+        const i=((cy*CH+(p>>3))*sw+(cx*CW+(p&7)))*4;
+        h[nearest(pal,d[i],d[i+1],d[i+2])]++;
+      }
+      let top=0,tv=-1;for(let k=0;k<16;k++)if(h[k]>tv){tv=h[k];top=k;}
+      bgHist[top]++;
+    }
+    let bg=0,bv=-1;for(let k=0;k<16;k++)if(bgHist[k]>bv){bv=bgHist[k];bg=k;}
+    globalBg=bg;
+  }
+  exportMeta={cols,rows,bg:globalBg,border:globalBg};
+
+  for(let cy=0;cy<rows;cy++){
+    let line='';
+    for(let cx=0;cx<cols;cx++){
+      if(mode==='blocks'){
+        // 2x2 sub-block average -> draw 4 quadrants in nearest colors
+        const sub=[[0,0],[4,0],[0,4],[4,4]];
+        sub.forEach(([ox,oy],qi)=>{
+          let r=0,g=0,b=0;
+          for(let y=0;y<4;y++)for(let x=0;x<4;x++){const i=((cy*CH+oy+y)*sw+(cx*CW+ox+x))*4;r+=d[i];g+=d[i+1];b+=d[i+2];}
+          r/=16;g/=16;b/=16;const c=pal[nearest(pal,r,g,b)];
+          oc.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+          oc.fillRect(cx*CW+ox,cy*CH+oy,4,4);
+        });
+        line+='▓';
+        continue;
+      }
+
+      // ---- Real PETSCII cell over a fixed global background ----
+      const bgI = globalBg, BG = pal[bgI];
+      // quantize pixels; pick dominant non-bg color as fg candidate
+      const fhist=new Uint16Array(16);
+      for(let p=0;p<64;p++){
+        const i=((cy*CH+(p>>3))*sw+(cx*CW+(p&7)))*4;
+        fhist[nearest(pal,d[i],d[i+1],d[i+2])]++;
+      }
+      let fgI=bgI,fv=-1;
+      for(let k=0;k<16;k++) if(k!==bgI && fhist[k]>fv){fv=fhist[k];fgI=k;}
+      if(fv<=0) fgI=bgI; // empty/solid-bg cell
+      const FG=pal[fgI];
+      // Bayer 4x4 ordered-dither threshold map (values 0..1), used when "Favor
+      // characters" > 0. Dithering breaks smooth mid-tones into alternating fg/bg
+      // pixels, which textured glyphs (checker/hatch/letters) then match — this is
+      // what actually pulls real characters out of a gradient instead of blocks.
+      const want=new Uint8Array(64);
+      const dq = charBias/30;             // 0..1 dither strength
+      for(let p=0;p<64;p++){
+        const i=((cy*CH+(p>>3))*sw+(cx*CW+(p&7)))*4;
+        const df=(d[i]-FG[0])**2+(d[i+1]-FG[1])**2+(d[i+2]-FG[2])**2;
+        const db=(d[i]-BG[0])**2+(d[i+1]-BG[1])**2+(d[i+2]-BG[2])**2;
+        if(dq<=0){ want[p]=df<db?1:0; continue; }
+        // fractional position between bg(0) and fg(1) by distance
+        const t = db/(df+db+1e-6);        // ~1 => closer to fg
+        const bx=(cx*CW+(p&7))&3, by=(cy*CH+(p>>3))&3;
+        const thr = (BAYER4[by*4+bx]+0.5)/16;
+        // blend hard threshold (0.5) with dithered threshold by strength
+        const useThr = 0.5*(1-dq) + thr*dq;
+        want[p] = t>useThr ? 1 : 0;
+      }
+      // ---- edge map of the want-mask (boundary pixels of the target shape) ----
+      const wedge=new Uint8Array(64);
+      for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+        const v=want[y*8+x];
+        if((x<7&&want[y*8+x+1]!==v)||(x>0&&want[y*8+x-1]!==v)||
+           (y<7&&want[(y+1)*8+x]!==v)||(y>0&&want[(y-1)*8+x]!==v)) wedge[y*8+x]=1;
+      }
+      // ---- effective weights: auto mode classifies the cell and routes to a
+      // metric profile; otherwise the manual sliders are used. ----
+      let ewE=edgeWeight, swE=shapeWeight, owE=orientWeight;
+      if(autoMatch){
+        const cls=classifyCell(want, wedge);
+        const prof=AUTO_PROFILES[cls];
+        ewE=prof[0]; swE=prof[1]; owE=prof[2];
+      }
+      // ---- precompute target metrics for this cell ----
+      const wDT = swE>0 ? distTransform(want) : null;
+      const wOR = owE>0 ? orientHist(want) : null;
+      // glyph cost combines up to four terms:
+      //   dd  = raw pixel disagreements (Hamming)
+      //   ed  = edge-map mismatch (boundary alignment)
+      //   ch  = chamfer / structural distance (ink-to-ink, shape similarity)
+      //   or  = orientation-histogram distance (horizontal vs vertical structure)
+      let best=0,bd=1e9;
+      for(let gi=0;gi<glyphMeta.length;gi++){
+        const GM=glyphMeta[gi], M=GM.bits, E=GM.emap;
+        let dd=0, ed=0;
+        for(let p=0;p<64;p++){
+          if(M[p]!==want[p]) dd++;
+          if(ewE>0 && (E[p]!==wedge[p])) ed++;
+        }
+        let cost = dd + ewE*ed;
+        if(swE>0)  cost += swE*chamferDist(want,wDT,M,GM.dt);
+        if(owE>0){
+          const O=GM.orient;
+          cost += owE*(Math.abs(wOR[0]-O[0])+Math.abs(wOR[1]-O[1])+Math.abs(wOR[2]-O[2])+Math.abs(wOR[3]-O[3]));
+        }
+        if(cost<bd){bd=cost;best=gi;}
+      }
+      const G=glyphMeta[best].bits;
+      oc.fillStyle=`rgb(${BG[0]},${BG[1]},${BG[2]})`;
+      oc.fillRect(cx*CW,cy*CH,CW,CH);
+      oc.fillStyle=`rgb(${FG[0]},${FG[1]},${FG[2]})`;
+      for(let p=0;p<64;p++) if(G[p]) oc.fillRect(cx*CW+(p&7),cy*CH+(p>>3),1,1);
+      screenCodes.push(best);
+      colorRAM.push(fgI);
+      line+=String.fromCharCode(32+(best&63));
+    }
+    textGrid.push(line);
+  }
+  scaleStep=1;applyScale();
+  status_.textContent=`${cols}×${rows} cells · ${pal_.value} · ${mode}`;
+  save_.disabled=copytxt_.disabled=scale_.disabled=false;
+  const en=mode_.value!=='blocks';
+  ['expprg','expc','expasm','exppetmate'].forEach(id=>$(id).disabled=!en);
+}
+
+let textGrid=[], screenCodes=[], colorRAM=[], globalBg=6, exportMeta={cols:40,rows:25,bg:6,border:6};
+function applyScale(){
+  const out=document.getElementById('out');
+  out.style.width=(out.width*scaleStep)+'px';
+}
+
+/* ---- wiring ---- */
+const $=id=>document.getElementById(id);
+const cols_=$('cols'),bright_=$('bright'),contrast_=$('contrast'),
+      mode_=$('mode'),pal_=$('pal'),dither_=$('dither'),
+      status_=$('status'),save_=$('save'),copytxt_=$('copytxt'),scale_=$('scale');
+
+function swatches(){const el=$('swatches');el.innerHTML='';PALETTES[pal_.value].forEach(c=>{const s=document.createElement('span');s.className='sw';s.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;el.appendChild(s);});}
+swatches();
+
+cols_.oninput=()=>{$('colsv').textContent=cols_.value;process();};
+bright_.oninput=()=>{$('brv').textContent=bright_.value;process();};
+contrast_.oninput=()=>{$('conv').textContent=(contrast_.value/100).toFixed(1);process();};
+mode_.onchange=dither_.onchange=process;
+pal_.onchange=()=>{swatches();process();};
+const charbias_=$('charbias');
+charbias_.oninput=()=>{charBias=+charbias_.value;$('charbiasv').textContent=charbias_.value;process();};
+const edgeweight_=$('edgeweight');
+edgeWeight=+edgeweight_.value;   // default 2
+edgeweight_.oninput=()=>{edgeWeight=+edgeweight_.value;$('edgew').textContent=edgeweight_.value;process();};
+$('edgew').textContent=edgeweight_.value;
+const shapeweight_=$('shapeweight');
+shapeweight_.oninput=()=>{shapeWeight=+shapeweight_.value;$('shapew').textContent=shapeweight_.value;process();};
+const orientweight_=$('orientweight');
+orientweight_.oninput=()=>{orientWeight=+orientweight_.value;$('orientw').textContent=orientweight_.value;process();};
+const automatch_=$('automatch');
+function syncAutoUI(){
+  const on=automatch_.checked;
+  [edgeweight_,shapeweight_,orientweight_].forEach(s=>{s.disabled=on;s.style.opacity=on?0.4:1;});
+}
+automatch_.onchange=()=>{autoMatch=automatch_.checked;syncAutoUI();process();};
+syncAutoUI();
+
+function readAsDataURL(f){
+  return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});
+}
+function loadImage(url){
+  // Resolve only when the image is actually decoded AND has dimensions.
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=async ()=>{
+      // some engines fire load before layout; decode() guarantees pixels are ready
+      try{ if(img.decode) await img.decode(); }catch(_){}
+      resolve(img);
+    };
+    img.onerror=()=>reject(new Error('image load failed'));
+    img.src=url;                 // set AFTER handlers are attached
+    // cached images may already be complete: trigger the path explicitly
+    if(img.complete && img.naturalWidth) img.onload();
+  });
+}
+async function loadFile(f){
+  const isSvg = f && (f.type==='image/svg+xml' || /\.svg$/i.test(f.name||''));
+  if(!f || (!f.type.startsWith('image/') && !isSvg)){status_.textContent='unsupported file';return;}
+  status_.textContent='decoding…';
+  try{
+    const url = await readAsDataURL(f);   // data URL avoids canvas-taint (esp. SVG)
+    const img = await loadImage(url);
+    let w=img.naturalWidth, h=img.naturalHeight;
+    if(!w || !h){
+      // SVG (and rare WebP) report 0 intrinsic size -> rasterize at a fixed canvas
+      const vb = isSvg ? parseSvgSize(url) : null;
+      w = (vb && vb.w) || 1024;
+      h = (vb && vb.h) || 1024;
+      const r=document.createElement('canvas');r.width=w;r.height=h;
+      r.getContext('2d').drawImage(img,0,0,w,h);
+      srcImg=r;
+    } else {
+      srcImg=img;
+    }
+    $('drop').style.display='none';$('out').style.display='block';
+    process();
+  }catch(err){
+    status_.textContent='could not decode this image';
+    console.error(err);
+  }
+}
+function parseSvgSize(dataUrl){
+  try{
+    const svg=decodeURIComponent(dataUrl.split(',')[1] ? atob(dataUrl.split(',')[1]) : '');
+    const vb=svg.match(/viewBox\s*=\s*["']\s*[\d.+-]+\s+[\d.+-]+\s+([\d.+-]+)\s+([\d.+-]+)/i);
+    if(vb) return {w:Math.round(+vb[1]), h:Math.round(+vb[2])};
+    const wm=svg.match(/\bwidth\s*=\s*["']?\s*([\d.]+)/i), hm=svg.match(/\bheight\s*=\s*["']?\s*([\d.]+)/i);
+    if(wm&&hm) return {w:Math.round(+wm[1]), h:Math.round(+hm[1])};
+  }catch(_){}
+  return null;
+}
+$('pick').onclick=()=>{ const fi=$('file'); fi.value=''; fi.click(); };
+$('file').onchange=e=>{ const f=e.target.files[0]; if(f) loadFile(f); };
+const drop=$('drop');
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',e=>loadFile(e.dataTransfer.files[0]));
+document.body.addEventListener('paste',e=>{for(const it of e.clipboardData.files)loadFile(it);});
+
+save_.onclick=()=>{
+  const a=document.createElement('a');
+  a.href=$('out').toDataURL('image/png'); a.download='petscii.png'; a.style.display='none';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>document.body.removeChild(a),2000);
+};
+copytxt_.onclick=()=>{
+  // emit C64 screen codes (one per cell), hex, row-major — pokeable into screen RAM
+  const cols=+cols_.value, lines=[];
+  for(let i=0;i<screenCodes.length;i+=cols)
+    lines.push(screenCodes.slice(i,i+cols).map(c=>c.toString(16).padStart(2,'0')).join(' '));
+  navigator.clipboard.writeText(lines.join('\n'));
+  status_.textContent='screen codes (hex) copied';
+};
+scale_.onclick=()=>{scaleStep=scaleStep>=4?1:scaleStep*2;applyScale();};
+$('expprg').onclick=exportPrg;
+$('expc').onclick=exportC;
+$('expasm').onclick=exportAsm;
+$('exppetmate').onclick=exportPetmate;
+
+/* ---------- EXPORTERS ---------- */
+function dl(name,data,mime){
+  const blob = data instanceof Uint8Array
+    ? new Blob([data],{type:mime||'application/octet-stream'})
+    : new Blob([data],{type:mime||'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name;
+  a.style.display='none';
+  document.body.appendChild(a);   // must be in the DOM for click() to fire in all browsers
+  a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},2000);
+}
+function haveScreen(){
+  if(!screenCodes.length){status_.textContent='convert an image first';return false;}
+  if(mode_.value==='blocks'){status_.textContent='switch to PETSCII mode to export codes';return false;}
+  return true;
+}
+// pad live cols×rows art into a full 40×25 (1000) C64 screen at top-left
+function padScreen(){
+  const {cols,rows,bg}=exportMeta;
+  const SCN=40,ROW=25;
+  const scr=new Uint8Array(1000).fill(32);   // space
+  const col=new Uint8Array(1000).fill(bg);   // fg=bg where empty (invisible)
+  for(let y=0;y<Math.min(rows,ROW);y++)for(let x=0;x<Math.min(cols,SCN);x++){
+    scr[y*SCN+x]=screenCodes[y*cols+x]&0xff;
+    col[y*SCN+x]=colorRAM[y*cols+x]&0x0f;
+  }
+  return {scr,col};
+}
+
+/* .petmate — native Petmate workspace (version 2). Open via Petmate File > Open.
+   Structure verified against Petmate/img2petscii source:
+   { version:2, screens:[0], framebufs:[{ width,height,backgroundColor,borderColor,
+     charset, name, framebuf: ScreenCell[height][width] of {code,color}, customFonts:{} }] } */
+function exportPetmate(){
+  if(!haveScreen())return;
+  const {cols,rows,bg,border}=exportMeta;
+  const charset = charset_.value==='set2' ? 'lower':'upper';
+  const framebuf=[];
+  for(let y=0;y<rows;y++){
+    const row=[];
+    for(let x=0;x<cols;x++){
+      row.push({code:screenCodes[y*cols+x]&0xff, color:colorRAM[y*cols+x]&0x0f});
+    }
+    framebuf.push(row);
+  }
+  const obj={
+    version:2,
+    screens:[0],
+    framebufs:[{
+      width:cols,height:rows,
+      backgroundColor:bg,borderColor:border,
+      charset,name:'screen',
+      framebuf,
+      customFonts:{}
+    }]
+  };
+  dl('petscii.petmate', JSON.stringify(obj), 'application/json');
+  status_.textContent='exported .petmate (File > Open in Petmate)';
+}
+
+/* .c — C arrays, full 40x25 padded */
+function exportC(){
+  if(!haveScreen())return;
+  const {scr,col}=padScreen(),{bg,border,cols,rows}=exportMeta;
+  const fmt=(arr,per=20)=>{let s='';for(let i=0;i<arr.length;i++){s+=(i%per?'':'\n    ')+'0x'+arr[i].toString(16).padStart(2,'0')+(i<arr.length-1?',':'');}return s;};
+  const c=`/* C64 PETSCII export — ${cols}x${rows} art on a 40x25 screen
+   screen RAM -> $0400, color RAM -> $D800, border $D020, background $D021 */
+#define PETSCII_BORDER ${border}
+#define PETSCII_BACKGROUND ${bg}
+
+const unsigned char petscii_screen[1000] = {${fmt(scr)}
+};
+
+const unsigned char petscii_color[1000] = {${fmt(col)}
+};
+`;
+  dl('petscii.c', c, 'text/x-c');
+  status_.textContent='exported .c (cc65 source — not a Petmate import)';
+}
+
+/* .asm — ACME / c64jasm-style source (assembles to a runnable .prg) */
+function exportAsm(){
+  if(!haveScreen())return;
+  const {scr,col}=padScreen(),{bg,border}=exportMeta;
+  const bytes=(arr)=>{let s='';for(let i=0;i<arr.length;i+=16){s+='        !byte '+Array.from(arr.slice(i,i+16),b=>'$'+b.toString(16).padStart(2,'0')).join(',')+'\n';}return s;};
+  const asm=`; C64 PETSCII export — ACME syntax (acme -f cbm -o petscii.prg petscii.asm)
+        !cpu 6510
+        * = $0801
+        ; BASIC: 10 SYS 2061
+        !byte $0c,$08,$0a,$00,$9e,$32,$30,$36,$31,$00,$00,$00
+start:
+        lda #${border} : sta $d020
+        lda #${bg}     : sta $d021
+        ldx #0
+copy:
+        lda screen+$000,x : sta $0400,x
+        lda screen+$100,x : sta $0500,x
+        lda screen+$200,x : sta $0600,x
+        lda screen+$300,x : sta $0700,x
+        lda colram+$000,x : sta $d800,x
+        lda colram+$100,x : sta $d900,x
+        lda colram+$200,x : sta $da00,x
+        lda colram+$300,x : sta $db00,x
+        inx
+        bne copy
+        rts
+screen:
+${bytes(scr)}colram:
+${bytes(col)}`;
+  dl('petscii.asm', asm, 'text/plain');
+  status_.textContent='exported .asm';
+}
+
+/* .prg — runnable Commodore 64 program (hand-assembled 6510) */
+function exportPrg(){
+  if(!haveScreen())return;
+  const {scr,col}=padScreen(),{bg,border}=exportMeta;
+  const LOAD=0x0801;
+  const lo=n=>n&0xff, hi=n=>(n>>8)&0xff;
+  // BASIC stub: 10 SYS 2061  ($080D)
+  const basic=[0x0c,0x08, 0x0a,0x00, 0x9e,0x32,0x30,0x36,0x31, 0x00, 0x00,0x00];
+  const mlStart=LOAD+basic.length;            // 0x080D
+  // assemble ML twice (resolve data addresses)
+  const asm=(scrAddr,colAddr)=>{
+    const c=[];
+    c.push(0xA9,border&0xff, 0x8D,0x20,0xD0); // lda #border : sta $d020
+    c.push(0xA9,bg&0xff,     0x8D,0x21,0xD0); // lda #bg     : sta $d021
+    c.push(0xA2,0x00);                        // ldx #0
+    const loop=c.length;
+    for(let p=0;p<4;p++) c.push(0xBD,lo(scrAddr+p*0x100),hi(scrAddr+p*0x100), 0x9D,lo(0x0400+p*0x100),hi(0x0400+p*0x100));
+    for(let p=0;p<4;p++) c.push(0xBD,lo(colAddr+p*0x100),hi(colAddr+p*0x100), 0x9D,lo(0xD800+p*0x100),hi(0xD800+p*0x100));
+    c.push(0xE8);                             // inx
+    const rel=loop-(c.length+2);
+    c.push(0xD0,rel&0xff);                    // bne copy
+    c.push(0x60);                             // rts
+    return c;
+  };
+  const mlLen=asm(0,0).length;
+  const scrAddr=mlStart+mlLen, colAddr=scrAddr+1000;
+  const ml=asm(scrAddr,colAddr);
+  const prg=new Uint8Array(2+basic.length+ml.length+1000+1000);
+  let o=0;
+  prg[o++]=lo(LOAD);prg[o++]=hi(LOAD);
+  basic.forEach(b=>prg[o++]=b);
+  ml.forEach(b=>prg[o++]=b);
+  scr.forEach(b=>prg[o++]=b);
+  col.forEach(b=>prg[o++]=b);
+  dl('petscii.prg', prg, 'application/octet-stream');
+  status_.textContent='exported .prg (LOAD"*",8,1 : RUN)';
+}
+
+
+const charset_=$('charset');
+function setBank(){
+  const useInv = $('useinv').checked;
+  const base = charset_.value==='set2' ? GLYPHS.set2 : GLYPHS.set1;
+  glyphMeta = meta(useInv ? base : base.slice(0,128));   // 128 or 256 candidates
+}
+charset_.onchange=()=>{setBank();process();};
+$('useinv').onchange=()=>{setBank();process();};
+
+/* decode the embedded ROM (both sets, with reverse glyphs) */
+GLYPHS.set1 = withReverse(decodeCharset(UP_B64));
+GLYPHS.set2 = withReverse(decodeCharset(LOW_B64));
+setBank();
+status_.textContent='ROM loaded · drop an image';
+
+/* ---- draw the PETSCIInator title from real C64 ROM glyphs ---- */
+(function drawTitle(){
+  const text='PETSCIINATOR';
+  const up=GLYPHS.set1;                      // uppercase/graphics set
+  const scrCode=ch=>{                         // map char -> C64 screen code
+    if(ch>='A'&&ch<='Z') return ch.charCodeAt(0)-64;  // A=1..Z=26
+    if(ch>='0'&&ch<='9') return ch.charCodeAt(0)-48+48;
+    if(ch===' ') return 32;
+    return 32;
+  };
+  const SCALE=6, GAP=1, CW=8, CH=8;
+  const cvs=document.getElementById('titlebanner');
+  const cols=text.length;
+  cvs.width=cols*(CW+GAP)*SCALE - GAP*SCALE;
+  cvs.height=CH*SCALE;
+  const ctx=cvs.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  // light-blue glyphs on transparent (screen bg shows through), white drop highlight
+  for(let n=0;n<cols;n++){
+    const G=up[scrCode(text[n])];
+    const ox=n*(CW+GAP)*SCALE;
+    for(let p=0;p<64;p++) if(G[p]){
+      const x=ox+(p&7)*SCALE, y=(p>>3)*SCALE;
+      // subtle 1px dark drop-shadow for depth
+      ctx.fillStyle='#2a1f6b';
+      ctx.fillRect(x+2,y+2,SCALE,SCALE);
+    }
+  }
+  for(let n=0;n<cols;n++){
+    const G=up[scrCode(text[n])];
+    const ox=n*(CW+GAP)*SCALE;
+    for(let p=0;p<64;p++) if(G[p]){
+      const x=ox+(p&7)*SCALE, y=(p>>3)*SCALE;
+      ctx.fillStyle='#8d80d8';   // C64 light blue
+      ctx.fillRect(x,y,SCALE,SCALE);
+    }
+  }
+})();
+</script>
+</body>
+</html>
