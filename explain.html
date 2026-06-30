@@ -110,7 +110,7 @@
   <div class="kicker">Commodore 64 · how PETSCIInator thinks</div>
   <canvas id="titlebanner2" width="100" height="20"></canvas>
   <h1>From photo to PETSCII</h1>
-  <p class="lede">A 40×25 grid, two colors per cell, and 256 fixed glyphs from the character ROM. Here's every step PETSCIInator takes — running live on your image.</p>
+  <p class="lede">A PETSCII grid, two colors per cell, and 256 fixed glyphs from the character ROM. The production converter now scans the full source patch for each cell; this page visualizes the same constraints in a compact 40-column demo.</p>
   <a class="backlink" href="index.html">◄ back to the converter</a>
 </header>
 
@@ -127,7 +127,7 @@
     </select>
     <span class="hint" style="margin-left:auto">2nd metric
       <select id="matchmode">
-        <option value="auto" selected>auto (per-cell)</option>
+        <option value="auto" selected>demo auto (per-cell)</option>
         <option value="edge">edge fidelity</option>
         <option value="shape">shape (structural)</option>
         <option value="orient">orientation</option>
@@ -144,26 +144,26 @@
   <!-- STEP 1 -->
   <section class="step s1 open" data-step="1">
     <div class="step-head"><span class="num">1</span>
-      <span class="step-title">Downscale to the cell grid<span class="step-sub">320×200 image → 40×25 cells, 8×8 pixels each</span></span>
+      <span class="step-title">Map source patches to the cell grid<span class="step-sub">full image → cells, each cell reduced to one 8×8 glyph decision</span></span>
       <span class="chev">▶</span></div>
     <div class="step-body">
-      <p>A C64 text screen is <b>40 columns × 25 rows</b>. Every cell is an 8×8 block of pixels. So the very first move is to squash the source image down to exactly <code class="k">40·8 × 25·8</code> = 320×200 pixels, letting the browser do smooth averaging. After this, each 8×8 cell holds the pixels the algorithm has to reproduce with a single character.</p>
+      <p>A C64 text screen is made of character cells. Every cell draws one 8×8 ROM glyph, but the source evidence for that cell comes from the corresponding patch of the <b>full source image</b>. The converter does not choose a glyph from one pre-downscaled pixel; it scans all source pixels covered by the cell, pools them into an 8×8 evidence mask, and then matches a glyph.</p>
       <div class="canvrow">
         <div class="canvcol"><span class="caption">your image</span><canvas id="c1src" width="320" height="200" style="width:320px"></canvas></div>
-        <div class="canvcol"><span class="caption">downscaled · grid overlaid</span><canvas id="c1grid" width="320" height="200" style="width:320px"></canvas></div>
+        <div class="canvcol"><span class="caption">cell grid preview</span><canvas id="c1grid" width="320" height="200" style="width:320px"></canvas></div>
       </div>
-      <p class="muted">The grid lines mark cell boundaries. Everything from here on happens cell by cell.</p>
+      <p class="muted">The demo canvas is a 40-column visualization. In the converter, the status line shows the real source size and approximate source pixels per cell.</p>
     </div>
   </section>
 
   <!-- STEP 2 -->
   <section class="step s2" data-step="2">
     <div class="step-head"><span class="num">2</span>
-      <span class="step-title">Choose one background for the whole screen<span class="step-sub">the C64 shares a single background color across all cells</span></span>
+      <span class="step-title">Choose background color per cell or screen<span class="step-sub">local backgrounds improve previews; classic exports still use one shared background</span></span>
       <span class="chev">▶</span></div>
     <div class="step-body">
-      <p>Here's the constraint that shapes everything: in standard text mode a cell can only show <b>two</b> colors — its own foreground, plus a <b>background that's global</b> to the entire screen. So before touching individual cells, the converter picks that one shared background.</p>
-      <p>It quantizes every pixel to the 16-color VIC-II palette, finds each cell's most common color, then takes the color that "wins" the most cells. That's almost always the backdrop.</p>
+      <p>Here's the constraint that shapes everything: a PETSCII cell can only show <b>two</b> colors — foreground ink and background. The preview path now defaults to <b>cell backgrounds</b>, which lets each cell use the dominant local backdrop and preserves faces, shirts, and stadium/background regions much better.</p>
+      <p>Classic export formats still need a single screen background, so the converter can also choose one shared background by finding the color that wins the most cells. Turn off cell backgrounds before exporting PRG/C/ASM/Petmate data.</p>
       <div class="canvrow">
         <div class="canvcol"><span class="caption">quantized to 16 colors</span><canvas id="c2quant" width="320" height="200" style="width:320px"></canvas></div>
         <div class="canvcol"><span class="caption">chosen background</span>
@@ -194,7 +194,7 @@
       <span class="step-title">Binarize: where should foreground go?<span class="step-sub">each of the 64 pixels becomes a single on/off bit</span></span>
       <span class="chev">▶</span></div>
     <div class="step-body">
-      <p>With two colors locked, each pixel asks one question: am I closer to foreground or to background? That yields a 64-bit pattern — a tiny black-and-white stencil of where the ink belongs in this cell. The converter calls this the <code class="k">want</code> mask.</p>
+      <p>With two colors locked, the source patch asks one question for each of the cell's 64 glyph slots: is this slot closer to foreground or background? That yields a 64-bit pattern — a tiny black-and-white stencil of where the ink belongs in this cell. The converter calls this the <code class="k">want</code> mask.</p>
       <div class="canvrow">
         <div class="canvcol"><span class="caption">want-mask for every cell (white = foreground)</span><canvas id="c4mask" width="320" height="200" style="width:320px"></canvas></div>
       </div>
@@ -208,8 +208,8 @@
       <span class="step-title">Match the closest ROM glyph<span class="step-sub">find the character whose shape disagrees least — Hamming distance</span></span>
       <span class="chev">▶</span></div>
     <div class="step-body">
-      <p>Every character in the C64 ROM is also an 8×8 stencil. The converter compares the cell's <code class="k">want</code> mask against all 256 glyphs and counts how many of the 64 positions <b>disagree</b> — that count is the <b>Hamming distance</b>. The glyph with the fewest disagreements wins. Draw it in the foreground color over the background, and the cell is done.</p>
-      <p class="muted">But raw Hamming has a blind spot: it treats every pixel independently, so a thin line can match a hollow "O" (or even vanish to blank) if the counts happen to work out. Real converters add a second metric to protect structure. Use the <b>2nd metric</b> menu above to compare flat Hamming against <b>edge fidelity</b> (boundaries must line up), <b>shape</b> (ink must sit near ink, via a distance transform), <b>orientation</b> (a horizontal cell can't grab a vertical glyph), or <b>auto</b> — which classifies each cell (flat / line / region / texture) and applies whichever metric suits it. The panel below shows, per cell, where flat Hamming and the chosen approach disagree.</p>
+      <p>Every character in the C64 ROM is also an 8×8 stencil. The production converter's default Auto path now uses <b>full-source pixel fit</b>: it builds the two-color <code class="k">want</code> mask from the original source pixels covered by the cell, then picks the glyph whose 64 on/off positions disagree least. Draw that glyph in the foreground color over the background, and the cell is done.</p>
+      <p class="muted">The more structural matchers are still useful for experiments, but they can overvalue texture in faces, hands, and blurred backgrounds. That is why the default Auto path is conservative now: preserve the big tonal regions first, and only use line/shape/phase tools when explicitly selected. The menu above is an explanatory demo of those second metrics: <b>edge fidelity</b>, <b>shape</b>, <b>orientation</b>, and a per-cell demo auto mode.</p>
 
       <div class="canvrow">
         <div class="canvcol"><span class="caption">final PETSCII · click a cell to inspect</span><canvas id="c5out" width="320" height="200" style="width:320px;cursor:crosshair"></canvas></div>
@@ -273,7 +273,7 @@
     </div>
   </section>
 
-  <p class="foot">Same ROM and matching logic as the converter — nothing here is faked. <a href="index.html">Open the converter ►</a></p>
+  <p class="foot">Same ROM, with an interactive view of the matching ideas. The production converter now runs from the shared core library. <a href="index.html">Open the converter ►</a></p>
 </div>
 </div>
 
@@ -324,7 +324,7 @@ const BAYER4=[0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];
 const COLS=40,ROWS=25,CW=8,CH=8,SW=320,SH=200;
 
 /* ---- state computed from the current image ---- */
-let imgData=null;       // Uint8ClampedArray of the 320x200 downscaled image
+let imgData=null;       // Uint8ClampedArray for this page's 40-column preview image
 let bgIndex=6;
 let cells=[];           // per cell: {fg, want:Uint8(64), code, ham, ranked:[{gi,d}]}
 let srcImg=null;
